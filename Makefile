@@ -12,6 +12,9 @@ lint-rust:
 lint-md:
 	npx markdownlint-cli2 "**/*.md"
 
+lint-yaml:
+	yamllint .
+
 build:
 	cargo build
 
