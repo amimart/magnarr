@@ -3,8 +3,11 @@ extends: default
 rules:
   line-length:
     max: 120
-  # Allow both "true"/"false" and "yes"/"no" style is too broad; stick to explicit booleans
+  # "---" document start is too pedantic for most YAML files
+  document-start: disable
   truthy:
     allowed-values: ["true", "false"]
+    # allows "on:" as a mapping key (GitHub Actions workflows)
+    check-keys: false
   comments:
     min-spaces-from-content: 1
