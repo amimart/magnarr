@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint lint-rust lint-md lint-yaml build test audit check fix
+.PHONY: fmt fmt-check lint lint-rust lint-md lint-yaml build test audit check fix fix-rust fix-md
 
 fmt:
 	cargo fmt
@@ -31,6 +31,12 @@ audit:
 check: fmt-check lint build test audit
 
 ## Auto-fix formatting and clippy lints
-fix:
+fix-rust:
 	cargo fmt
 	cargo clippy --fix --allow-dirty
+
+fix-md:
+	npx markdownlint-cli2 --fix "**/*.md"
+
+## Auto-fix all (yaml has no auto-fixer)
+fix: fix-rust fix-md
