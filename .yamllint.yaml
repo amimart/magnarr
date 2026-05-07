@@ -1,0 +1,13 @@
+extends: default
+
+rules:
+  line-length:
+    max: 120
+  # "---" document start is too pedantic for most YAML files
+  document-start: disable
+  truthy:
+    allowed-values: ["true", "false"]
+    # allows "on:" as a mapping key (GitHub Actions workflows)
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1

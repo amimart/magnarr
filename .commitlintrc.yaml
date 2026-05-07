@@ -1,0 +1,8 @@
+extends:
+  - "@commitlint/config-conventional"
+
+rules:
+  # Relax line length constraints — long URLs and co-authored-by trailers are common
+  header-max-length: [0, always]
+  body-max-line-length: [0, always]
+  footer-max-line-length: [0, always]
