@@ -9,6 +9,9 @@ fmt-check:
 lint-rust:
 	cargo clippy -- -D warnings
 
+lint-md:
+	npx markdownlint-cli2 "**/*.md"
+
 build:
 	cargo build
 
