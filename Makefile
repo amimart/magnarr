@@ -15,6 +15,9 @@ lint-md:
 lint-yaml:
 	yamllint .
 
+## Run all linters
+lint: lint-rust lint-md lint-yaml
+
 build:
 	cargo build
 
