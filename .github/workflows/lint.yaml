@@ -43,6 +43,8 @@ jobs:
   lint-commits:
     name: Lint (Commits)
     runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
     steps:
       - uses: actions/checkout@v4
         with:
