@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint build test audit check fix
+.PHONY: fmt fmt-check lint lint-rust lint-md lint-yaml build test audit check fix
 
 fmt:
 	cargo fmt
@@ -6,7 +6,7 @@ fmt:
 fmt-check:
 	cargo fmt --check
 
-lint:
+lint-rust:
 	cargo clippy -- -D warnings
 
 build:
