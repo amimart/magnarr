@@ -1,0 +1,6 @@
+default: true
+
+# Line length is often impractical in prose and tables
+MD013: false
+# Allow inline HTML (useful for badges, <details>, etc.)
+MD033: false
