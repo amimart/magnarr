@@ -1,0 +1,10 @@
+extends: default
+
+rules:
+  line-length:
+    max: 120
+  # Allow both "true"/"false" and "yes"/"no" style is too broad; stick to explicit booleans
+  truthy:
+    allowed-values: ["true", "false"]
+  comments:
+    min-spaces-from-content: 1
