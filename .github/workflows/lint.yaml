@@ -36,6 +36,18 @@ jobs:
         with:
           globs: "**/*.md"
 
+  lint-commits:
+    name: Lint (Commits)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: wagoid/commitlint-github-action@v6
+        with:
+          configFile: .commitlintrc.yaml
+
   lint-yaml:
     name: Lint (YAML)
     runs-on: ubuntu-latest
