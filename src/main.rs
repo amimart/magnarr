@@ -1,3 +1,3 @@
 fn main() {
-    println!("magnarr");
+    magnarr::cli::run();
 }
