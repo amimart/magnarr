@@ -115,12 +115,16 @@ async fn poll_downloads(
 
         match torrent_client.status(info_hash).await {
             Ok(ts) => {
+                if ts.state == TorrentState::Seeding {
+                    import_download(repository, &mut download, &ts.save_path).await;
+                    continue;
+                }
+
                 let new_status = match ts.state {
-                    TorrentState::Downloading => DownloadStatus::Downloading,
-                    TorrentState::Seeding => DownloadStatus::Completed,
-                    TorrentState::Paused => DownloadStatus::Downloading,
+                    TorrentState::Downloading | TorrentState::Paused => DownloadStatus::Downloading,
                     TorrentState::Error => DownloadStatus::Failed,
                     TorrentState::Unknown => download.status,
+                    TorrentState::Seeding => unreachable!(),
                 };
 
                 if new_status != download.status {
@@ -136,6 +140,62 @@ async fn poll_downloads(
             }
         }
     }
+}
+
+/// Transitions a download through `Importing` → `Imported` (or `Failed`),
+/// copying the torrent save directory into the download's `target_dir`.
+async fn import_download(
+    repository: &Arc<dyn DownloadRepository>,
+    download: &mut Download,
+    save_path: &str,
+) {
+    download.status = DownloadStatus::Importing;
+    download.touch();
+    if let Err(e) = repository.update_download(download) {
+        tracing::error!(id = %download.id, "Failed to set download to Importing: {e}");
+        return;
+    }
+
+    let src = std::path::PathBuf::from(save_path);
+    let dst = std::path::PathBuf::from(&download.target_dir);
+
+    match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &dst)).await {
+        Ok(Ok(())) => {
+            download.status = DownloadStatus::Imported;
+            download.imported_path = Some(download.target_dir.clone());
+            tracing::info!(id = %download.id, "Download imported to {}", download.target_dir);
+        }
+        Ok(Err(e)) => {
+            tracing::error!(id = %download.id, "Failed to copy torrent files: {e}");
+            download.status = DownloadStatus::Failed;
+            download.error = Some(format!("Import failed: {e}"));
+        }
+        Err(e) => {
+            tracing::error!(id = %download.id, "Import task panicked: {e}");
+            download.status = DownloadStatus::Failed;
+            download.error = Some(format!("Import task panicked: {e}"));
+        }
+    }
+
+    download.touch();
+    if let Err(e) = repository.update_download(download) {
+        tracing::error!(id = %download.id, "Failed to update download after import: {e}");
+    }
+}
+
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -221,5 +281,80 @@ mod tests {
             stored.is_none(),
             "record should be rolled back on client failure"
         );
+    }
+
+    #[test]
+    fn copy_dir_recursive_copies_nested_structure() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let dst_dir = tempfile::tempdir().unwrap();
+
+        std::fs::write(src_dir.path().join("file.txt"), b"hello").unwrap();
+        let sub = src_dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        std::fs::write(sub.join("nested.txt"), b"world").unwrap();
+
+        copy_dir_recursive(src_dir.path(), dst_dir.path()).unwrap();
+
+        assert_eq!(
+            std::fs::read(dst_dir.path().join("file.txt")).unwrap(),
+            b"hello"
+        );
+        assert_eq!(
+            std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(),
+            b"world"
+        );
+    }
+
+    #[tokio::test]
+    async fn import_download_transitions_to_imported_on_success() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let dst_dir = tempfile::tempdir().unwrap();
+        std::fs::write(src_dir.path().join("movie.mkv"), b"data").unwrap();
+
+        let db_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap(),
+        );
+        let uri: MagnetUri = MAGNET.parse().unwrap();
+        let mut dl = crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
+        store.create_download(&dl).unwrap();
+
+        import_download(
+            &(store.clone() as Arc<dyn DownloadRepository>),
+            &mut dl,
+            src_dir.path().to_str().unwrap(),
+        )
+        .await;
+
+        assert_eq!(dl.status, DownloadStatus::Imported);
+        assert_eq!(dl.imported_path.as_deref(), Some(dst_dir.path().to_str().unwrap()));
+        assert!(dst_dir.path().join("movie.mkv").exists());
+
+        let persisted = store.get_download(dl.id).unwrap();
+        assert_eq!(persisted.status, DownloadStatus::Imported);
+    }
+
+    #[tokio::test]
+    async fn import_download_transitions_to_failed_on_copy_error() {
+        let db_dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap(),
+        );
+        let uri: MagnetUri = MAGNET.parse().unwrap();
+        let mut dl = crate::app::model::Download::new(uri, "/nonexistent/target".to_owned());
+        store.create_download(&dl).unwrap();
+
+        import_download(
+            &(store.clone() as Arc<dyn DownloadRepository>),
+            &mut dl,
+            "/nonexistent/source",
+        )
+        .await;
+
+        assert_eq!(dl.status, DownloadStatus::Failed);
+        assert!(dl.error.is_some());
+
+        let persisted = store.get_download(dl.id).unwrap();
+        assert_eq!(persisted.status, DownloadStatus::Failed);
     }
 }
