@@ -1,4 +1,4 @@
-.PHONY: fmt fmt-check lint lint-rust lint-md lint-yaml build test audit check fix fix-rust fix-md help
+.PHONY: lint lint-rust lint-rust-format lint-md lint-yaml build test audit check fix fix-rust fix-md help
 
 BOLD   := \033[1m
 RESET  := \033[0m
@@ -10,17 +10,13 @@ help: ## Show available targets
 	@printf "$(BOLD)Available targets:$(RESET)\n"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)$(BOLD)%-12s$(RESET) %s\n", $$1, $$2}'
 
-fmt: ## Format code
-	@printf "$(CYAN)$(BOLD)🎨 Formatting...$(RESET)\n"
-	cargo fmt
-
-fmt-check: ## Check formatting without modifying files
-	@printf "$(CYAN)$(BOLD)🎨 Checking formatting...$(RESET)\n"
-	cargo fmt --check
-
 lint-rust: ## Lint Rust (clippy)
 	@printf "$(CYAN)$(BOLD)🦀 Linting Rust...$(RESET)\n"
 	cargo clippy -- -D warnings
+
+lint-rust-format: ## Lint Rust formatting
+	@printf "$(CYAN)$(BOLD)🎨 Checking formatting...$(RESET)\n"
+	cargo fmt --check
 
 lint-md: ## Lint Markdown
 	@printf "$(CYAN)$(BOLD)📝 Linting Markdown...$(RESET)\n"
@@ -30,7 +26,7 @@ lint-yaml: ## Lint YAML
 	@printf "$(CYAN)$(BOLD)📋 Linting YAML...$(RESET)\n"
 	yamllint .
 
-lint: lint-rust lint-md lint-yaml ## Run all linters
+lint: lint-rust lint-rust-format lint-md lint-yaml ## Run all linters
 
 build: ## Build the project
 	@printf "$(GREEN)$(BOLD)🔨 Building...$(RESET)\n"
@@ -44,7 +40,7 @@ audit: ## Run security audit
 	@printf "$(YELLOW)$(BOLD)🔒 Running security audit...$(RESET)\n"
 	cargo audit
 
-check: fmt-check lint build test audit ## Run all checks (mirrors CI)
+check: lint build test audit ## Run all checks (mirrors CI)
 
 fix-rust: ## Auto-fix Rust formatting and clippy lints
 	@printf "$(CYAN)$(BOLD)🔧 Fixing Rust...$(RESET)\n"
