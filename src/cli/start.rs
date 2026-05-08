@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::app::App;
 use crate::cli::config::TorrentClientConfig;
 use crate::cli::{load_config, StartArgs};
@@ -26,25 +28,22 @@ pub async fn run(args: StartArgs) {
         }
     };
 
-    let (torrent_client, poll_interval) = match cfg.torrent_client {
-        TorrentClientConfig::Qbittorrent(qb) => {
-            let client = QbittorrentClient::new(QbConnectionConfig {
+    let torrent_client = match cfg.torrent_client {
+        TorrentClientConfig::Qbittorrent(qb) => Arc::new(QbittorrentClient::new(
+            QbConnectionConfig {
                 host: qb.host,
                 username: qb.username,
                 password: qb.password,
-            });
-            (
-                Arc::new(client) as Arc<dyn crate::app::torrent::TorrentClient>,
-                cfg.app.poll_interval,
-            )
-        }
+            },
+        )) as Arc<dyn crate::app::torrent::TorrentClient>,
     };
 
-    let app = App::new(Arc::new(repo), torrent_client, poll_interval);
-    app.run().await;
+    let token = CancellationToken::new();
+    let app = App::new(Arc::new(repo), torrent_client, cfg.app.poll_interval);
+    app.run(token.clone()).await;
 
     tracing::info!("Magnarr started successfully");
 
-    // Park the task until shutdown signal (future work).
-    std::future::pending::<()>().await;
+    // Park until a shutdown signal cancels the token (signal handling: future work).
+    token.cancelled().await;
 }

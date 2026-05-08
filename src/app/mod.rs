@@ -5,6 +5,8 @@ pub mod torrent;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::app::download::DownloadRepository;
 use crate::app::model::DownloadStatus;
 use crate::app::torrent::{TorrentClient, TorrentState};
@@ -30,21 +32,28 @@ impl App {
 
     /// Spawns a background task that periodically syncs active download
     /// statuses from the torrent client into the repository.
-    pub async fn run(&self) {
+    /// The task exits cleanly when `token` is cancelled.
+    pub async fn run(&self, token: CancellationToken) {
         let repository = Arc::clone(&self.repository);
         let torrent_client = Arc::clone(&self.torrent_client);
         let poll_interval = self.poll_interval;
 
         tokio::spawn(async move {
             loop {
-                poll_once(&repository, &torrent_client).await;
-                tokio::time::sleep(poll_interval).await;
+                poll_downloads(&repository, &torrent_client).await;
+                tokio::select! {
+                    _ = tokio::time::sleep(poll_interval) => {}
+                    _ = token.cancelled() => {
+                        tracing::info!("Polling loop shut down");
+                        break;
+                    }
+                }
             }
         });
     }
 }
 
-async fn poll_once(
+async fn poll_downloads(
     repository: &Arc<dyn DownloadRepository>,
     torrent_client: &Arc<dyn TorrentClient>,
 ) {
@@ -91,4 +100,3 @@ async fn poll_once(
         }
     }
 }
-

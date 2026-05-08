@@ -24,6 +24,7 @@ chrono = { version = "0.4", features = ["serde"] }
 humantime = "2"
 humantime-serde = "1"
 async-trait = "0.1"
+tokio-util = "0.7"
 
 redb = "2"
 reqwest = { version = "0.12", features = ["json", "cookies"] }
