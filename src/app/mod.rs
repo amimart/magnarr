@@ -145,8 +145,7 @@ mod tests {
     use crate::store::redb::RedbStore;
     use async_trait::async_trait;
 
-    const MAGNET: &str =
-        "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
+    const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
 
     struct OkTorrentClient;
 
@@ -185,10 +184,7 @@ mod tests {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
         let magnet: MagnetUri = MAGNET.parse().unwrap();
 
-        let dl = app
-            .download(magnet, "/downloads".to_owned())
-            .await
-            .unwrap();
+        let dl = app.download(magnet, "/downloads".to_owned()).await.unwrap();
 
         assert_eq!(dl.status, DownloadStatus::Submitted);
         assert!(dl.updated_at >= dl.created_at);
@@ -205,9 +201,7 @@ mod tests {
         app.download(magnet.clone(), "/downloads".to_owned())
             .await
             .unwrap();
-        let result = app
-            .download(magnet, "/downloads".to_owned())
-            .await;
+        let result = app.download(magnet, "/downloads".to_owned()).await;
 
         assert!(matches!(result, Err(AppError::AlreadyExists)));
     }
@@ -218,13 +212,14 @@ mod tests {
         let magnet: MagnetUri = MAGNET.parse().unwrap();
         let hash = magnet.info_hash().unwrap().to_owned();
 
-        let result = app
-            .download(magnet, "/downloads".to_owned())
-            .await;
+        let result = app.download(magnet, "/downloads".to_owned()).await;
 
         assert!(matches!(result, Err(AppError::TorrentClient(_))));
 
         let stored = app.repository.find_by_info_hash(&hash).unwrap();
-        assert!(stored.is_none(), "record should be rolled back on client failure");
+        assert!(
+            stored.is_none(),
+            "record should be rolled back on client failure"
+        );
     }
 }
