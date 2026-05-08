@@ -411,9 +411,7 @@ mod tests {
         .await;
 
         // dst = target_dir / src_dir_name
-        let expected_dst = dst_dir
-            .path()
-            .join(src_dir.path().file_name().unwrap());
+        let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
 
         assert_eq!(dl.status, DownloadStatus::Imported);
         assert_eq!(
@@ -451,11 +449,18 @@ mod tests {
         )
         .await;
 
-        assert_eq!(dl.status, DownloadStatus::Importing, "status should remain Importing on cancel");
+        assert_eq!(
+            dl.status,
+            DownloadStatus::Importing,
+            "status should remain Importing on cancel"
+        );
 
         // Partial dst must be cleaned up
         let final_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
-        assert!(!final_dst.exists(), "partial dst should be removed on cancel");
+        assert!(
+            !final_dst.exists(),
+            "partial dst should be removed on cancel"
+        );
 
         // Status in DB stays Importing (row was updated to Importing before copy started)
         let persisted = store.get_download(dl.id).unwrap();

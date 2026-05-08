@@ -449,11 +449,15 @@ mod tests {
         store.create_download(&dl2).unwrap();
         store.create_download(&dl3).unwrap();
 
-        let queued = store.list_downloads_by_status(DownloadStatus::Queued).unwrap();
+        let queued = store
+            .list_downloads_by_status(DownloadStatus::Queued)
+            .unwrap();
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].id, dl1.id);
 
-        let submitted = store.list_downloads_by_status(DownloadStatus::Submitted).unwrap();
+        let submitted = store
+            .list_downloads_by_status(DownloadStatus::Submitted)
+            .unwrap();
         assert_eq!(submitted.len(), 1);
         assert_eq!(submitted[0].id, dl2.id);
     }
@@ -469,10 +473,14 @@ mod tests {
         updated.touch();
         store.update_download(&updated).unwrap();
 
-        let queued = store.list_downloads_by_status(DownloadStatus::Queued).unwrap();
+        let queued = store
+            .list_downloads_by_status(DownloadStatus::Queued)
+            .unwrap();
         assert!(queued.is_empty(), "should no longer appear as Queued");
 
-        let submitted = store.list_downloads_by_status(DownloadStatus::Submitted).unwrap();
+        let submitted = store
+            .list_downloads_by_status(DownloadStatus::Submitted)
+            .unwrap();
         assert_eq!(submitted.len(), 1);
         assert_eq!(submitted[0].id, dl.id);
     }
@@ -484,7 +492,9 @@ mod tests {
         store.create_download(&dl).unwrap();
         store.delete_download(dl.id).unwrap();
 
-        let results = store.list_downloads_by_status(DownloadStatus::Queued).unwrap();
+        let results = store
+            .list_downloads_by_status(DownloadStatus::Queued)
+            .unwrap();
         assert!(results.is_empty());
     }
 
