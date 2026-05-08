@@ -37,15 +37,21 @@ pub struct StartArgs {
 }
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime")
+        .block_on(async {
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                .init();
 
-    match Cli::parse().command {
-        Command::Start(args) => start::run(args),
-        Command::Version => version::run(),
-    }
+            match Cli::parse().command {
+                Command::Start(args) => start::run(args).await,
+                Command::Version => version::run(),
+            }
+        });
 }

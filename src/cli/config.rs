@@ -8,6 +8,7 @@ use super::StartArgs;
 pub struct Config {
     pub server: ServerConfig,
     pub store: StoreConfig,
+    pub qbittorrent: QbittorrentConfig,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -18,6 +19,14 @@ pub struct ServerConfig {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct StoreConfig {
     pub path: String,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct QbittorrentConfig {
+    pub host: String,
+    pub username: String,
+    pub password: String,
+    pub poll_interval_secs: u64,
 }
 
 #[derive(Debug, Error)]
@@ -35,6 +44,7 @@ pub enum ConfigError {
 struct FileConfig {
     server: Option<FileServerConfig>,
     store: Option<FileStoreConfig>,
+    qbittorrent: Option<FileQbittorrentConfig>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -47,6 +57,14 @@ struct FileStoreConfig {
     path: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct FileQbittorrentConfig {
+    host: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    poll_interval_secs: Option<u64>,
+}
+
 fn default_config() -> Config {
     Config {
         server: ServerConfig {
@@ -54,6 +72,12 @@ fn default_config() -> Config {
         },
         store: StoreConfig {
             path: "./data/magnarr.redb".to_owned(),
+        },
+        qbittorrent: QbittorrentConfig {
+            host: "http://localhost:8080".to_owned(),
+            username: "admin".to_owned(),
+            password: "adminadmin".to_owned(),
+            poll_interval_secs: 30,
         },
     }
 }
@@ -80,6 +104,20 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
                 cfg.store.path = path;
             }
         }
+        if let Some(qb) = file_cfg.qbittorrent {
+            if let Some(host) = qb.host {
+                cfg.qbittorrent.host = host;
+            }
+            if let Some(username) = qb.username {
+                cfg.qbittorrent.username = username;
+            }
+            if let Some(password) = qb.password {
+                cfg.qbittorrent.password = password;
+            }
+            if let Some(secs) = qb.poll_interval_secs {
+                cfg.qbittorrent.poll_interval_secs = secs;
+            }
+        }
     } else if !is_default_path {
         return Err(ConfigError::FileNotFound(config_path.to_owned()));
     }
@@ -90,6 +128,20 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     }
     if let Ok(path) = std::env::var("MAGNARR_STORE_PATH") {
         cfg.store.path = path;
+    }
+    if let Ok(host) = std::env::var("MAGNARR_QB_HOST") {
+        cfg.qbittorrent.host = host;
+    }
+    if let Ok(username) = std::env::var("MAGNARR_QB_USERNAME") {
+        cfg.qbittorrent.username = username;
+    }
+    if let Ok(password) = std::env::var("MAGNARR_QB_PASSWORD") {
+        cfg.qbittorrent.password = password;
+    }
+    if let Ok(secs) = std::env::var("MAGNARR_QB_POLL_INTERVAL_SECS") {
+        if let Ok(v) = secs.parse() {
+            cfg.qbittorrent.poll_interval_secs = v;
+        }
     }
 
     // --- CLI args ---
