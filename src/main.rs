@@ -29,5 +29,3 @@ fn main() {
 
     tracing::info!("Magnarr started successfully");
 }
-
-

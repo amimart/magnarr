@@ -14,8 +14,7 @@ impl RedbStore {
     pub fn new(path: &str) -> Result<Self, StoreError> {
         if let Some(parent) = std::path::Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| StoreError::Backend(e.to_string()))?;
+                std::fs::create_dir_all(parent).map_err(|e| StoreError::Backend(e.to_string()))?;
             }
         }
 
@@ -93,8 +92,7 @@ impl Store for RedbStore {
             .get(id_str.as_str())
             .map_err(|e| StoreError::Backend(e.to_string()))?
             .ok_or(StoreError::NotFound)?;
-        serde_json::from_str(entry.value())
-            .map_err(|e| StoreError::Serialization(e.to_string()))
+        serde_json::from_str(entry.value()).map_err(|e| StoreError::Serialization(e.to_string()))
     }
 
     fn list_downloads(&self) -> Result<Vec<Download>, StoreError> {
@@ -106,8 +104,12 @@ impl Store for RedbStore {
             .open_table(DOWNLOADS)
             .map_err(|e| StoreError::Backend(e.to_string()))?;
         let mut downloads = Vec::new();
-        for entry in table.iter().map_err(|e| StoreError::Backend(e.to_string()))? {
-            let (_, value) = entry.map_err(|e: redb::StorageError| StoreError::Backend(e.to_string()))?;
+        for entry in table
+            .iter()
+            .map_err(|e| StoreError::Backend(e.to_string()))?
+        {
+            let (_, value) =
+                entry.map_err(|e: redb::StorageError| StoreError::Backend(e.to_string()))?;
             let dl: Download = serde_json::from_str(value.value())
                 .map_err(|e| StoreError::Serialization(e.to_string()))?;
             downloads.push(dl);
@@ -188,8 +190,7 @@ mod tests {
     use super::*;
     use crate::model::{Download, DownloadStatus};
 
-    const MAGNET: &str =
-        "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
+    const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
 
     fn new_store() -> (RedbStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
