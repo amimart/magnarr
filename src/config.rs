@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use thiserror::Error;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -32,6 +32,20 @@ pub enum ConfigError {
 #[derive(Debug, Parser)]
 #[command(name = "magnarr", about = "Magnarr download orchestrator")]
 pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Start the magnarr server
+    Start(StartArgs),
+    /// Display version and build information
+    Version,
+}
+
+#[derive(Debug, Parser)]
+pub struct StartArgs {
     /// Path to the config file
     #[arg(long, default_value = "config.yaml")]
     pub config: String,
@@ -74,11 +88,11 @@ fn default_config() -> Config {
 }
 
 /// Load config respecting precedence: defaults < file < env vars < CLI args.
-pub fn load_config(cli: Cli) -> Result<Config, ConfigError> {
+pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     let mut cfg = default_config();
 
     // --- config file ---
-    let config_path = cli.config.as_str();
+    let config_path = args.config.as_str();
     let is_default_path = config_path == "config.yaml";
 
     if Path::new(config_path).exists() {
@@ -108,10 +122,10 @@ pub fn load_config(cli: Cli) -> Result<Config, ConfigError> {
     }
 
     // --- CLI args ---
-    if let Some(addr) = cli.server_listen_addr {
+    if let Some(addr) = args.server_listen_addr {
         cfg.server.listen_addr = addr;
     }
-    if let Some(path) = cli.store_path {
+    if let Some(path) = args.store_path {
         cfg.store.path = path;
     }
 
@@ -127,8 +141,8 @@ mod tests {
     /// Serializes tests that modify environment variables to avoid cross-test pollution.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn cli_defaults() -> Cli {
-        Cli {
+    fn cli_defaults() -> StartArgs {
+        StartArgs {
             config: "config.yaml".to_owned(),
             server_listen_addr: None,
             store_path: None,
@@ -160,7 +174,7 @@ mod tests {
         )
         .unwrap();
 
-        let cli = Cli {
+        let cli = StartArgs {
             config: config_path.to_str().unwrap().to_owned(),
             server_listen_addr: None,
             store_path: None,
@@ -181,7 +195,7 @@ mod tests {
         writeln!(f, "server:\n  listen_addr: 0.0.0.0:9090").unwrap();
 
         std::env::set_var("MAGNARR_SERVER_LISTEN_ADDR", "1.2.3.4:1111");
-        let cli = Cli {
+        let cli = StartArgs {
             config: config_path.to_str().unwrap().to_owned(),
             server_listen_addr: None,
             store_path: None,
@@ -202,7 +216,7 @@ mod tests {
         writeln!(f, "store:\n  path: /original.redb").unwrap();
 
         std::env::set_var("MAGNARR_STORE_PATH", "/env-override.redb");
-        let cli = Cli {
+        let cli = StartArgs {
             config: config_path.to_str().unwrap().to_owned(),
             server_listen_addr: None,
             store_path: None,
@@ -223,7 +237,7 @@ mod tests {
         writeln!(f, "server:\n  listen_addr: 0.0.0.0:9090").unwrap();
 
         std::env::set_var("MAGNARR_SERVER_LISTEN_ADDR", "1.2.3.4:1111");
-        let cli = Cli {
+        let cli = StartArgs {
             config: config_path.to_str().unwrap().to_owned(),
             server_listen_addr: Some("5.6.7.8:2222".to_owned()),
             store_path: None,
@@ -235,7 +249,7 @@ mod tests {
 
     #[test]
     fn explicit_config_path_not_found_returns_error() {
-        let cli = Cli {
+        let cli = StartArgs {
             config: "/nonexistent/path/config.yaml".to_owned(),
             server_listen_addr: None,
             store_path: None,
@@ -246,7 +260,7 @@ mod tests {
 
     #[test]
     fn missing_default_config_file_is_silently_ignored() {
-        let cli = Cli {
+        let cli = StartArgs {
             config: "config.yaml".to_owned(),
             server_listen_addr: None,
             store_path: None,
