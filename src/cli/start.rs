@@ -2,9 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::app::App;
+use crate::cli::config::TorrentClientConfig;
 use crate::cli::{load_config, StartArgs};
 use crate::store::redb::RedbStore;
-use crate::torrent::qbittorrent::{QbittorrentClient, QbittorrentConfig};
+use crate::torrent::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 
 pub async fn run(args: StartArgs) {
     let cfg = match load_config(args) {
@@ -26,14 +27,21 @@ pub async fn run(args: StartArgs) {
         }
     };
 
-    let torrent_client = QbittorrentClient::new(QbittorrentConfig {
-        host: cfg.qbittorrent.host,
-        username: cfg.qbittorrent.username,
-        password: cfg.qbittorrent.password,
-    });
+    let (torrent_client, poll_interval) = match cfg.torrent_client {
+        TorrentClientConfig::Qbittorrent(qb) => {
+            let client = QbittorrentClient::new(QbConnectionConfig {
+                host: qb.host,
+                username: qb.username,
+                password: qb.password,
+            });
+            (
+                Arc::new(client) as Arc<dyn crate::app::torrent::TorrentClient>,
+                Duration::from_secs(qb.poll_interval_secs),
+            )
+        }
+    };
 
-    let app = App::new(Arc::new(repo), Arc::new(torrent_client));
-    let poll_interval = Duration::from_secs(cfg.qbittorrent.poll_interval_secs);
+    let app = App::new(Arc::new(repo), torrent_client);
     app.run(poll_interval).await;
 
     tracing::info!("Magnarr started successfully");
