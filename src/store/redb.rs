@@ -80,6 +80,41 @@ impl DownloadRepository for RedbStore {
         Ok(())
     }
 
+    fn find_by_info_hash(&self, info_hash: &str) -> Result<Option<Download>, RepositoryError> {
+        let index_key = format!("infohash:{info_hash}");
+        let tx = self
+            .db
+            .begin_read()
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+        let id_str = {
+            let indexes = tx
+                .open_table(INDEXES)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            indexes
+                .get(index_key.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                .map(|v| v.value().to_owned())
+        };
+
+        let Some(id_str) = id_str else {
+            return Ok(None);
+        };
+
+        let table = tx
+            .open_table(DOWNLOADS)
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+        let Some(entry) = table
+            .get(id_str.as_str())
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?
+        else {
+            return Ok(None);
+        };
+        serde_json::from_str(entry.value())
+            .map_err(|e| RepositoryError::Serialization(e.to_string()))
+            .map(Some)
+    }
+
     fn get_download(&self, id: uuid::Uuid) -> Result<Download, RepositoryError> {
         let id_str = id.to_string();
         let tx = self
@@ -258,6 +293,25 @@ mod tests {
         let fetched = store.get_download(dl.id).unwrap();
         assert_eq!(fetched.status, DownloadStatus::Downloading);
         assert!(fetched.updated_at >= dl.updated_at);
+    }
+
+    #[test]
+    fn find_by_info_hash_returns_download() {
+        let (store, _dir) = new_store();
+        let dl = test_download();
+        let hash = dl.info_hash.as_deref().unwrap().to_owned();
+        store.create_download(&dl).unwrap();
+
+        let found = store.find_by_info_hash(&hash).unwrap();
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().id, dl.id);
+    }
+
+    #[test]
+    fn find_by_info_hash_returns_none_for_unknown_hash() {
+        let (store, _dir) = new_store();
+        let result = store.find_by_info_hash("0000000000000000000000000000000000000000");
+        assert!(matches!(result, Ok(None)));
     }
 
     #[test]
