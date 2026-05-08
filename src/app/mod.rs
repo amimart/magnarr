@@ -89,6 +89,7 @@ async fn poll_downloads(
 
                 if new_status != download.status {
                     download.status = new_status;
+                    download.touch();
                     if let Err(e) = repository.update_download(&download) {
                         tracing::error!(id = %download.id, "Failed to update download status: {e}");
                     }

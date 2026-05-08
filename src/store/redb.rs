@@ -121,10 +121,7 @@ impl DownloadRepository for RedbStore {
 
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError> {
         let id_str = download.id.to_string();
-        let mut updated = download.clone();
-        updated.updated_at = chrono::Utc::now();
-
-        let json = serde_json::to_string(&updated)
+        let json = serde_json::to_string(download)
             .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
 
         let tx = self
@@ -248,13 +245,14 @@ mod tests {
     }
 
     #[test]
-    fn update_download_changes_updated_at_and_persists() {
+    fn update_download_persists_changes() {
         let (store, _dir) = new_store();
         let dl = test_download();
         store.create_download(&dl).unwrap();
 
         let mut updated = dl.clone();
         updated.status = DownloadStatus::Downloading;
+        updated.touch();
         store.update_download(&updated).unwrap();
 
         let fetched = store.get_download(dl.id).unwrap();
