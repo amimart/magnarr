@@ -1,7 +1,7 @@
 use redb::{Database, ReadableTable, TableDefinition};
 
-use crate::model::Download;
-use crate::store::{Store, StoreError};
+use crate::app::download::{DownloadRepository, RepositoryError};
+use crate::app::model::Download;
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 const INDEXES: TableDefinition<&str, &str> = TableDefinition::new("indexes");
@@ -11,176 +11,178 @@ pub struct RedbStore {
 }
 
 impl RedbStore {
-    pub fn new(path: &str) -> Result<Self, StoreError> {
+    pub fn new(path: &str) -> Result<Self, RepositoryError> {
         if let Some(parent) = std::path::Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|e| StoreError::Backend(e.to_string()))?;
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             }
         }
 
-        let db = Database::create(path).map_err(|e| StoreError::Backend(e.to_string()))?;
+        let db = Database::create(path).map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
         // Ensure tables exist.
         let tx = db
             .begin_write()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         {
             tx.open_table(DOWNLOADS)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             tx.open_table(INDEXES)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
         Ok(Self { db })
     }
 }
 
-impl Store for RedbStore {
-    fn create_download(&self, download: &Download) -> Result<(), StoreError> {
+impl DownloadRepository for RedbStore {
+    fn create_download(&self, download: &Download) -> Result<(), RepositoryError> {
         let id_str = download.id.to_string();
         let json = serde_json::to_string(download)
-            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+            .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
 
         let tx = self
             .db
             .begin_write()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         {
             let mut table = tx
                 .open_table(DOWNLOADS)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
             if table
                 .get(id_str.as_str())
-                .map_err(|e| StoreError::Backend(e.to_string()))?
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
                 .is_some()
             {
-                return Err(StoreError::AlreadyExists);
+                return Err(RepositoryError::AlreadyExists);
             }
 
             table
                 .insert(id_str.as_str(), json.as_str())
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
             if let Some(ref hash) = download.info_hash {
                 let index_key = format!("infohash:{hash}");
                 let mut indexes = tx
                     .open_table(INDEXES)
-                    .map_err(|e| StoreError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
                 indexes
                     .insert(index_key.as_str(), id_str.as_str())
-                    .map_err(|e| StoreError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             }
         }
         tx.commit()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         Ok(())
     }
 
-    fn get_download(&self, id: uuid::Uuid) -> Result<Download, StoreError> {
+    fn get_download(&self, id: uuid::Uuid) -> Result<Download, RepositoryError> {
         let id_str = id.to_string();
         let tx = self
             .db
             .begin_read()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         let table = tx
             .open_table(DOWNLOADS)
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         let entry = table
             .get(id_str.as_str())
-            .map_err(|e| StoreError::Backend(e.to_string()))?
-            .ok_or(StoreError::NotFound)?;
-        serde_json::from_str(entry.value()).map_err(|e| StoreError::Serialization(e.to_string()))
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?
+            .ok_or(RepositoryError::NotFound)?;
+        serde_json::from_str(entry.value())
+            .map_err(|e| RepositoryError::Serialization(e.to_string()))
     }
 
-    fn list_downloads(&self) -> Result<Vec<Download>, StoreError> {
+    fn list_downloads(&self) -> Result<Vec<Download>, RepositoryError> {
         let tx = self
             .db
             .begin_read()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         let table = tx
             .open_table(DOWNLOADS)
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         let mut downloads = Vec::new();
         for entry in table
             .iter()
-            .map_err(|e| StoreError::Backend(e.to_string()))?
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?
         {
             let (_, value) =
-                entry.map_err(|e: redb::StorageError| StoreError::Backend(e.to_string()))?;
+                entry.map_err(|e: redb::StorageError| RepositoryError::Backend(e.to_string()))?;
             let dl: Download = serde_json::from_str(value.value())
-                .map_err(|e| StoreError::Serialization(e.to_string()))?;
+                .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
             downloads.push(dl);
         }
         Ok(downloads)
     }
 
-    fn update_download(&self, download: &Download) -> Result<(), StoreError> {
+    fn update_download(&self, download: &Download) -> Result<(), RepositoryError> {
         let id_str = download.id.to_string();
         let mut updated = download.clone();
         updated.updated_at = chrono::Utc::now();
 
         let json = serde_json::to_string(&updated)
-            .map_err(|e| StoreError::Serialization(e.to_string()))?;
+            .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
 
         let tx = self
             .db
             .begin_write()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         {
             let mut table = tx
                 .open_table(DOWNLOADS)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             table
                 .insert(id_str.as_str(), json.as_str())
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         Ok(())
     }
 
-    fn delete_download(&self, id: uuid::Uuid) -> Result<(), StoreError> {
+    fn delete_download(&self, id: uuid::Uuid) -> Result<(), RepositoryError> {
         let id_str = id.to_string();
 
         let tx = self
             .db
             .begin_write()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         {
             let mut table = tx
                 .open_table(DOWNLOADS)
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
             let entry = table
                 .get(id_str.as_str())
-                .map_err(|e| StoreError::Backend(e.to_string()))?
-                .ok_or(StoreError::NotFound)?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                .ok_or(RepositoryError::NotFound)?;
 
             let download: Download = serde_json::from_str(entry.value())
-                .map_err(|e| StoreError::Serialization(e.to_string()))?;
+                .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
 
             // Drop entry guard before mutating the table.
             drop(entry);
 
             table
                 .remove(id_str.as_str())
-                .map_err(|e| StoreError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
             if let Some(ref hash) = download.info_hash {
                 let index_key = format!("infohash:{hash}");
                 let mut indexes = tx
                     .open_table(INDEXES)
-                    .map_err(|e| StoreError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
                 indexes
                     .remove(index_key.as_str())
-                    .map_err(|e| StoreError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             }
         }
         tx.commit()
-            .map_err(|e| StoreError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         Ok(())
     }
 }
@@ -188,7 +190,7 @@ impl Store for RedbStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Download, DownloadStatus};
+    use crate::app::model::{Download, DownloadStatus};
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
 
@@ -221,14 +223,14 @@ mod tests {
         let dl = test_download();
         store.create_download(&dl).unwrap();
         let result = store.create_download(&dl);
-        assert!(matches!(result, Err(StoreError::AlreadyExists)));
+        assert!(matches!(result, Err(RepositoryError::AlreadyExists)));
     }
 
     #[test]
     fn get_unknown_uuid_returns_not_found() {
         let (store, _dir) = new_store();
         let result = store.get_download(uuid::Uuid::new_v4());
-        assert!(matches!(result, Err(StoreError::NotFound)));
+        assert!(matches!(result, Err(RepositoryError::NotFound)));
     }
 
     #[test]
@@ -257,7 +259,6 @@ mod tests {
 
         let fetched = store.get_download(dl.id).unwrap();
         assert_eq!(fetched.status, DownloadStatus::Downloading);
-        // updated_at must be >= original
         assert!(fetched.updated_at >= dl.updated_at);
     }
 
@@ -269,7 +270,7 @@ mod tests {
         store.delete_download(dl.id).unwrap();
 
         let result = store.get_download(dl.id);
-        assert!(matches!(result, Err(StoreError::NotFound)));
+        assert!(matches!(result, Err(RepositoryError::NotFound)));
     }
 
     #[test]
@@ -280,7 +281,6 @@ mod tests {
         store.create_download(&dl).unwrap();
         store.delete_download(dl.id).unwrap();
 
-        // Verify by checking the indexes table directly.
         let tx = store.db.begin_read().unwrap();
         let indexes = tx.open_table(INDEXES).unwrap();
         let hash = dl.info_hash.as_deref().unwrap();
