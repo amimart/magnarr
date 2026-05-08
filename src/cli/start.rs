@@ -40,8 +40,8 @@ pub async fn run(args: StartArgs) {
         }
     };
 
-    let app = App::new(Arc::new(repo), torrent_client);
-    app.run(poll_interval).await;
+    let app = App::new(Arc::new(repo), torrent_client, poll_interval);
+    app.run().await;
 
     tracing::info!("Magnarr started successfully");
 

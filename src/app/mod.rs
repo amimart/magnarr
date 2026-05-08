@@ -12,24 +12,28 @@ use crate::app::torrent::{TorrentClient, TorrentState};
 pub struct App {
     repository: Arc<dyn DownloadRepository>,
     torrent_client: Arc<dyn TorrentClient>,
+    poll_interval: Duration,
 }
 
 impl App {
     pub fn new(
         repository: Arc<dyn DownloadRepository>,
         torrent_client: Arc<dyn TorrentClient>,
+        poll_interval: Duration,
     ) -> Self {
         Self {
             repository,
             torrent_client,
+            poll_interval,
         }
     }
 
     /// Spawns a background task that periodically syncs active download
     /// statuses from the torrent client into the repository.
-    pub async fn run(&self, poll_interval: Duration) {
+    pub async fn run(&self) {
         let repository = Arc::clone(&self.repository);
         let torrent_client = Arc::clone(&self.torrent_client);
+        let poll_interval = self.poll_interval;
 
         tokio::spawn(async move {
             loop {
