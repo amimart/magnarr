@@ -13,10 +13,6 @@ use crate::app::error::AppError;
 use crate::app::model::{Download, DownloadStatus, MagnetUri};
 use crate::app::torrent::{TorrentClient, TorrentState};
 
-enum CopyOutcome {
-    Completed,
-    Cancelled,
-}
 
 #[derive(Clone)]
 pub struct App {
@@ -92,7 +88,7 @@ impl App {
     }
 
     async fn poll_downloads(&self, token: &CancellationToken) {
-        // Pass 1: sync status for actively tracked downloads.
+        // Pass 1: sync torrent status for active downloads.
         let mut active = match self
             .repository
             .list_downloads_by_status(DownloadStatus::Submitted)
@@ -121,19 +117,13 @@ impl App {
 
             match self.torrent_client.status(info_hash).await {
                 Ok(ts) => {
-                    if ts.state == TorrentState::Seeding {
-                        self.import_download(&mut download, &ts.save_path, token)
-                            .await;
-                        continue;
-                    }
-
                     let new_status = match ts.state {
+                        TorrentState::Seeding => DownloadStatus::Importing,
                         TorrentState::Downloading | TorrentState::Paused => {
                             DownloadStatus::Downloading
                         }
                         TorrentState::Error => DownloadStatus::Failed,
                         TorrentState::Unknown => download.status,
-                        TorrentState::Seeding => unreachable!(),
                     };
 
                     if new_status != download.status {
@@ -150,7 +140,7 @@ impl App {
             }
         }
 
-        // Pass 2: retry any imports that were interrupted by a previous shutdown.
+        // Pass 2: copy files for downloads that are ready to import.
         let importing = match self
             .repository
             .list_downloads_by_status(DownloadStatus::Importing)
@@ -171,26 +161,18 @@ impl App {
             };
             match self.torrent_client.status(info_hash).await {
                 Ok(ts) if ts.state == TorrentState::Seeding => {
-                    self.import_download(&mut download, &ts.save_path, token)
-                        .await;
+                    self.import_download(&mut download, &ts.save_path).await;
                 }
-                _ => {} // Not seeding yet — wait for next poll cycle.
+                _ => {} // Not seeding yet or error — retry next cycle.
             }
         }
     }
 
-    /// Transitions a download through `Importing` → `Imported` (or `Failed`).
-    ///
-    /// Copies `save_path` as a named subdirectory under `download.target_dir`.
-    /// If the token is cancelled mid-copy, the partial destination is cleaned up
-    /// and the download remains `Importing` so it can be retried on next start.
-    async fn import_download(
-        &self,
-        download: &mut Download,
-        save_path: &str,
-        token: &CancellationToken,
-    ) {
-        let src = std::path::Path::new(save_path);
+    /// Copies the torrent save directory into `download.target_dir` and
+    /// transitions the download to `Imported` or `Failed`.
+    /// Assumes the download is already in `Importing` status.
+    async fn import_download(&self, download: &mut Download, save_path: &str) {
+        let src = std::path::PathBuf::from(save_path);
 
         let dir_name = match src.file_name() {
             Some(n) => n.to_owned(),
@@ -203,33 +185,24 @@ impl App {
                 return;
             }
         };
-        let final_dst = std::path::Path::new(&download.target_dir).join(&dir_name);
+        let final_dst = std::path::PathBuf::from(&download.target_dir).join(&dir_name);
 
-        download.status = DownloadStatus::Importing;
-        download.touch();
-        if let Err(e) = self.repository.update_download(download) {
-            tracing::error!(id = %download.id, "Failed to set download to Importing: {e}");
-            return;
-        }
-
-        match Self::copy_dir_recursive_async(src, &final_dst, token).await {
-            Ok(CopyOutcome::Completed) => {
+        match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &final_dst)).await {
+            Ok(Ok(())) => {
+                let dst = std::path::Path::new(&download.target_dir).join(&dir_name);
                 download.status = DownloadStatus::Imported;
-                download.imported_path = Some(final_dst.to_string_lossy().into_owned());
-                tracing::info!(id = %download.id, "Download imported to {}", final_dst.display());
+                download.imported_path = Some(dst.to_string_lossy().into_owned());
+                tracing::info!(id = %download.id, "Download imported to {}", dst.display());
             }
-            Ok(CopyOutcome::Cancelled) => {
-                tracing::info!(id = %download.id, "Import cancelled, cleaning up partial copy");
-                if let Err(e) = tokio::fs::remove_dir_all(&final_dst).await {
-                    tracing::warn!(id = %download.id, "Failed to clean up partial copy at {}: {e}", final_dst.display());
-                }
-                // Status stays Importing — retry on next start.
-                return;
-            }
-            Err(e) => {
+            Ok(Err(e)) => {
                 tracing::error!(id = %download.id, "Failed to copy torrent files: {e}");
                 download.status = DownloadStatus::Failed;
                 download.error = Some(format!("Import failed: {e}"));
+            }
+            Err(e) => {
+                tracing::error!(id = %download.id, "Import task panicked: {e}");
+                download.status = DownloadStatus::Failed;
+                download.error = Some(format!("Import task panicked: {e}"));
             }
         }
 
@@ -238,33 +211,21 @@ impl App {
             tracing::error!(id = %download.id, "Failed to update download after import: {e}");
         }
     }
+}
 
-    async fn copy_dir_recursive_async(
-        src: &std::path::Path,
-        dst: &std::path::Path,
-        token: &CancellationToken,
-    ) -> std::io::Result<CopyOutcome> {
-        tokio::fs::create_dir_all(dst).await?;
-        let mut rd: tokio::fs::ReadDir = tokio::fs::read_dir(src).await?;
-        while let Some(entry) = rd.next_entry().await? {
-            if token.is_cancelled() {
-                return Ok(CopyOutcome::Cancelled);
-            }
-            let src_path = entry.path();
-            let dst_path = dst.join(entry.file_name());
-            if src_path.is_dir() {
-                match Box::pin(Self::copy_dir_recursive_async(&src_path, &dst_path, token))
-                    .await?
-                {
-                    CopyOutcome::Cancelled => return Ok(CopyOutcome::Cancelled),
-                    CopyOutcome::Completed => {}
-                }
-            } else {
-                tokio::fs::copy(&src_path, &dst_path).await?;
-            }
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            std::fs::copy(&src_path, &dst_path)?;
         }
-        Ok(CopyOutcome::Completed)
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -352,8 +313,8 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn copy_dir_recursive_async_copies_nested_structure() {
+    #[test]
+    fn copy_dir_recursive_copies_nested_structure() {
         let src_dir = tempfile::tempdir().unwrap();
         let dst_dir = tempfile::tempdir().unwrap();
 
@@ -362,44 +323,13 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("nested.txt"), b"world").unwrap();
 
-        let token = CancellationToken::new();
-        let result = App::copy_dir_recursive_async(src_dir.path(), dst_dir.path(), &token)
-            .await
-            .unwrap();
-        assert!(matches!(result, CopyOutcome::Completed));
+        copy_dir_recursive(src_dir.path(), dst_dir.path()).unwrap();
 
-        assert_eq!(
-            std::fs::read(dst_dir.path().join("file.txt")).unwrap(),
-            b"hello"
-        );
-        assert_eq!(
-            std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(),
-            b"world"
-        );
+        assert_eq!(std::fs::read(dst_dir.path().join("file.txt")).unwrap(), b"hello");
+        assert_eq!(std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(), b"world");
     }
 
-    #[tokio::test]
-    async fn copy_dir_recursive_async_returns_cancelled_and_leaves_src_intact() {
-        let src_dir = tempfile::tempdir().unwrap();
-        std::fs::write(src_dir.path().join("file.txt"), b"data").unwrap();
-
-        let token = CancellationToken::new();
-        token.cancel(); // already cancelled before we start
-
-        let dst_dir = tempfile::tempdir().unwrap();
-        let dst = dst_dir.path().join("output");
-        let result = App::copy_dir_recursive_async(src_dir.path(), &dst, &token)
-            .await
-            .unwrap();
-        assert!(matches!(result, CopyOutcome::Cancelled));
-        // dst was created by create_dir_all but no file was copied
-        assert!(!dst.join("file.txt").exists());
-    }
-
-    fn new_app_with_store(
-        store: Arc<RedbStore>,
-        client: Arc<dyn TorrentClient>,
-    ) -> App {
+    fn new_app_with_store(store: Arc<RedbStore>, client: Arc<dyn TorrentClient>) -> App {
         App::new(store as Arc<dyn DownloadRepository>, client, Duration::from_secs(60))
     }
 
@@ -415,64 +345,20 @@ mod tests {
         let uri: MagnetUri = MAGNET.parse().unwrap();
         let mut dl =
             crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
+        dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();
 
         let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        let token = CancellationToken::new();
-        app.import_download(&mut dl, src_dir.path().to_str().unwrap(), &token)
+        app.import_download(&mut dl, src_dir.path().to_str().unwrap())
             .await;
 
-        // dst = target_dir / src_dir_name
         let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
-
         assert_eq!(dl.status, DownloadStatus::Imported);
-        assert_eq!(
-            dl.imported_path.as_deref(),
-            Some(expected_dst.to_str().unwrap())
-        );
+        assert_eq!(dl.imported_path.as_deref(), Some(expected_dst.to_str().unwrap()));
         assert!(expected_dst.join("movie.mkv").exists());
 
         let persisted = store.get_download(dl.id).unwrap();
         assert_eq!(persisted.status, DownloadStatus::Imported);
-    }
-
-    #[tokio::test]
-    async fn import_download_cancelled_mid_copy_leaves_status_importing() {
-        let src_dir = tempfile::tempdir().unwrap();
-        std::fs::write(src_dir.path().join("big.mkv"), b"video").unwrap();
-
-        let dst_dir = tempfile::tempdir().unwrap();
-        let db_dir = tempfile::tempdir().unwrap();
-        let store =
-            Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
-        let uri: MagnetUri = MAGNET.parse().unwrap();
-        let mut dl =
-            crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
-        store.create_download(&dl).unwrap();
-
-        let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        let token = CancellationToken::new();
-        token.cancel(); // simulate cancellation before copy starts
-
-        app.import_download(&mut dl, src_dir.path().to_str().unwrap(), &token)
-            .await;
-
-        assert_eq!(
-            dl.status,
-            DownloadStatus::Importing,
-            "status should remain Importing on cancel"
-        );
-
-        // Partial dst must be cleaned up
-        let final_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
-        assert!(
-            !final_dst.exists(),
-            "partial dst should be removed on cancel"
-        );
-
-        // Status in DB stays Importing (row was updated to Importing before copy started)
-        let persisted = store.get_download(dl.id).unwrap();
-        assert_eq!(persisted.status, DownloadStatus::Importing);
     }
 
     #[tokio::test]
@@ -482,12 +368,11 @@ mod tests {
             Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
         let uri: MagnetUri = MAGNET.parse().unwrap();
         let mut dl = crate::app::model::Download::new(uri, "/nonexistent/target".to_owned());
+        dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();
 
         let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        let token = CancellationToken::new();
-        app.import_download(&mut dl, "/nonexistent/source", &token)
-            .await;
+        app.import_download(&mut dl, "/nonexistent/source").await;
 
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
