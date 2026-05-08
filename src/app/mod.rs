@@ -13,7 +13,6 @@ use crate::app::error::AppError;
 use crate::app::model::{Download, DownloadStatus, MagnetUri};
 use crate::app::torrent::{TorrentClient, TorrentState};
 
-
 #[derive(Clone)]
 pub struct App {
     repository: Arc<dyn DownloadRepository>,
@@ -88,7 +87,7 @@ impl App {
         });
     }
 
-    async fn poll_downloads(&self, token: &CancellationToken) {
+    async fn poll_downloads(&self, _token: &CancellationToken) {
         let mut active = match self
             .repository
             .list_downloads_by_status(DownloadStatus::Submitted)
@@ -326,12 +325,22 @@ mod tests {
 
         copy_dir_recursive(src_dir.path(), dst_dir.path()).unwrap();
 
-        assert_eq!(std::fs::read(dst_dir.path().join("file.txt")).unwrap(), b"hello");
-        assert_eq!(std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(), b"world");
+        assert_eq!(
+            std::fs::read(dst_dir.path().join("file.txt")).unwrap(),
+            b"hello"
+        );
+        assert_eq!(
+            std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(),
+            b"world"
+        );
     }
 
     fn new_app_with_store(store: Arc<RedbStore>, client: Arc<dyn TorrentClient>) -> App {
-        App::new(store as Arc<dyn DownloadRepository>, client, Duration::from_secs(60))
+        App::new(
+            store as Arc<dyn DownloadRepository>,
+            client,
+            Duration::from_secs(60),
+        )
     }
 
     #[tokio::test]
@@ -355,7 +364,10 @@ mod tests {
 
         let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
         assert_eq!(dl.status, DownloadStatus::Imported);
-        assert_eq!(dl.imported_path.as_deref(), Some(expected_dst.to_str().unwrap()));
+        assert_eq!(
+            dl.imported_path.as_deref(),
+            Some(expected_dst.to_str().unwrap())
+        );
         assert!(expected_dst.join("movie.mkv").exists());
 
         let persisted = store.get_download(dl.id).unwrap();
