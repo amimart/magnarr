@@ -312,11 +312,11 @@ mod tests {
         std::fs::write(src_dir.path().join("movie.mkv"), b"data").unwrap();
 
         let db_dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(
-            RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap(),
-        );
+        let store =
+            Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
         let uri: MagnetUri = MAGNET.parse().unwrap();
-        let mut dl = crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
+        let mut dl =
+            crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
         store.create_download(&dl).unwrap();
 
         import_download(
@@ -327,7 +327,10 @@ mod tests {
         .await;
 
         assert_eq!(dl.status, DownloadStatus::Imported);
-        assert_eq!(dl.imported_path.as_deref(), Some(dst_dir.path().to_str().unwrap()));
+        assert_eq!(
+            dl.imported_path.as_deref(),
+            Some(dst_dir.path().to_str().unwrap())
+        );
         assert!(dst_dir.path().join("movie.mkv").exists());
 
         let persisted = store.get_download(dl.id).unwrap();
@@ -337,9 +340,8 @@ mod tests {
     #[tokio::test]
     async fn import_download_transitions_to_failed_on_copy_error() {
         let db_dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(
-            RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap(),
-        );
+        let store =
+            Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
         let uri: MagnetUri = MAGNET.parse().unwrap();
         let mut dl = crate::app::model::Download::new(uri, "/nonexistent/target".to_owned());
         store.create_download(&dl).unwrap();
