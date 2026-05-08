@@ -13,6 +13,7 @@ use crate::app::error::AppError;
 use crate::app::model::{Download, DownloadStatus, MagnetUri};
 use crate::app::torrent::{TorrentClient, TorrentState};
 
+#[derive(Clone)]
 pub struct App {
     repository: Arc<dyn DownloadRepository>,
     torrent_client: Arc<dyn TorrentClient>,
@@ -70,15 +71,13 @@ impl App {
     /// statuses from the torrent client into the repository.
     /// The task exits cleanly when `token` is cancelled.
     pub async fn run(&self, token: CancellationToken) {
-        let repository = Arc::clone(&self.repository);
-        let torrent_client = Arc::clone(&self.torrent_client);
-        let poll_interval = self.poll_interval;
-
+        let app = self.clone();
         tokio::spawn(async move {
             loop {
-                poll_downloads(&repository, &torrent_client).await;
+                app.poll_downloads(&token).await;
+                app.import_downloads(&token).await;
                 tokio::select! {
-                    _ = tokio::time::sleep(poll_interval) => {}
+                    _ = tokio::time::sleep(app.poll_interval) => {}
                     _ = token.cancelled() => {
                         tracing::info!("Polling loop shut down");
                         break;
@@ -87,99 +86,130 @@ impl App {
             }
         });
     }
-}
 
-async fn poll_downloads(
-    repository: &Arc<dyn DownloadRepository>,
-    torrent_client: &Arc<dyn TorrentClient>,
-) {
-    let downloads = match repository.list_downloads() {
-        Ok(d) => d,
-        Err(e) => {
-            tracing::error!("Failed to list downloads for polling: {e}");
-            return;
-        }
-    };
-
-    let active = downloads.into_iter().filter(|d| {
-        matches!(
-            d.status,
-            DownloadStatus::Submitted | DownloadStatus::Downloading
-        )
-    });
-
-    for mut download in active {
-        let Some(ref info_hash) = download.info_hash else {
-            continue;
+    async fn poll_downloads(&self, _token: &CancellationToken) {
+        let mut active = match self
+            .repository
+            .list_downloads_by_status(DownloadStatus::Submitted)
+        {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("Failed to list Submitted downloads: {e}");
+                return;
+            }
         };
+        match self
+            .repository
+            .list_downloads_by_status(DownloadStatus::Downloading)
+        {
+            Ok(d) => active.extend(d),
+            Err(e) => {
+                tracing::error!("Failed to list Downloading downloads: {e}");
+                return;
+            }
+        }
 
-        match torrent_client.status(info_hash).await {
-            Ok(ts) => {
-                if ts.state == TorrentState::Seeding {
-                    import_download(repository, &mut download, &ts.save_path).await;
-                    continue;
-                }
+        for mut download in active {
+            let Some(ref info_hash) = download.info_hash else {
+                continue;
+            };
 
-                let new_status = match ts.state {
-                    TorrentState::Downloading | TorrentState::Paused => DownloadStatus::Downloading,
-                    TorrentState::Error => DownloadStatus::Failed,
-                    TorrentState::Unknown => download.status,
-                    TorrentState::Seeding => unreachable!(),
-                };
+            match self.torrent_client.status(info_hash).await {
+                Ok(ts) => {
+                    let new_status = match ts.state {
+                        TorrentState::Seeding => DownloadStatus::Importing,
+                        TorrentState::Downloading | TorrentState::Paused => {
+                            DownloadStatus::Downloading
+                        }
+                        TorrentState::Error => DownloadStatus::Failed,
+                        TorrentState::Unknown => download.status,
+                    };
 
-                if new_status != download.status {
-                    download.status = new_status;
-                    download.touch();
-                    if let Err(e) = repository.update_download(&download) {
-                        tracing::error!(id = %download.id, "Failed to update download status: {e}");
+                    if new_status != download.status {
+                        download.status = new_status;
+                        download.touch();
+                        if let Err(e) = self.repository.update_download(&download) {
+                            tracing::error!(id = %download.id, "Failed to update download status: {e}");
+                        }
                     }
                 }
+                Err(e) => {
+                    tracing::warn!(id = %download.id, "Failed to fetch torrent status: {e}");
+                }
+            }
+        }
+    }
+
+    async fn import_downloads(&self, token: &CancellationToken) {
+        let importing = match self
+            .repository
+            .list_downloads_by_status(DownloadStatus::Importing)
+        {
+            Ok(d) => d,
+            Err(e) => {
+                tracing::error!("Failed to list Importing downloads: {e}");
+                return;
+            }
+        };
+
+        for mut download in importing {
+            if token.is_cancelled() {
+                break;
+            }
+            let Some(ref info_hash) = download.info_hash else {
+                continue;
+            };
+            match self.torrent_client.status(info_hash).await {
+                Ok(ts) if ts.state == TorrentState::Seeding => {
+                    self.import_download(&mut download, &ts.save_path).await;
+                }
+                _ => {} // Not seeding yet or error — retry next cycle.
+            }
+        }
+    }
+
+    /// Copies the torrent save directory into `download.target_dir` and
+    /// transitions the download to `Imported` or `Failed`.
+    /// Assumes the download is already in `Importing` status.
+    async fn import_download(&self, download: &mut Download, save_path: &str) {
+        let src = std::path::PathBuf::from(save_path);
+
+        let dir_name = match src.file_name() {
+            Some(n) => n.to_owned(),
+            None => {
+                tracing::error!(id = %download.id, "save_path has no file name component: {save_path}");
+                download.status = DownloadStatus::Failed;
+                download.error = Some(format!("save_path has no file name: {save_path}"));
+                download.touch();
+                let _ = self.repository.update_download(download);
+                return;
+            }
+        };
+        let final_dst = std::path::PathBuf::from(&download.target_dir).join(&dir_name);
+
+        match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &final_dst)).await {
+            Ok(Ok(())) => {
+                let dst = std::path::Path::new(&download.target_dir).join(&dir_name);
+                download.status = DownloadStatus::Imported;
+                download.imported_path = Some(dst.to_string_lossy().into_owned());
+                tracing::info!(id = %download.id, "Download imported to {}", dst.display());
+            }
+            Ok(Err(e)) => {
+                tracing::error!(id = %download.id, "Failed to copy torrent files: {e}");
+                download.status = DownloadStatus::Failed;
+                download.error = Some(format!("Import failed: {e}"));
             }
             Err(e) => {
-                tracing::warn!(id = %download.id, "Failed to fetch torrent status: {e}");
+                tracing::error!(id = %download.id, "Import task panicked: {e}");
+                download.status = DownloadStatus::Failed;
+                download.error = Some(format!("Import task panicked: {e}"));
             }
         }
-    }
-}
 
-/// Transitions a download through `Importing` → `Imported` (or `Failed`),
-/// copying the torrent save directory into the download's `target_dir`.
-async fn import_download(
-    repository: &Arc<dyn DownloadRepository>,
-    download: &mut Download,
-    save_path: &str,
-) {
-    download.status = DownloadStatus::Importing;
-    download.touch();
-    if let Err(e) = repository.update_download(download) {
-        tracing::error!(id = %download.id, "Failed to set download to Importing: {e}");
-        return;
-    }
-
-    let src = std::path::PathBuf::from(save_path);
-    let dst = std::path::PathBuf::from(&download.target_dir);
-
-    match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &dst)).await {
-        Ok(Ok(())) => {
-            download.status = DownloadStatus::Imported;
-            download.imported_path = Some(download.target_dir.clone());
-            tracing::info!(id = %download.id, "Download imported to {}", download.target_dir);
+        download.touch();
+        if let Err(e) = self.repository.update_download(download) {
+            tracing::error!(id = %download.id, "Failed to update download after import: {e}");
         }
-        Ok(Err(e)) => {
-            tracing::error!(id = %download.id, "Failed to copy torrent files: {e}");
-            download.status = DownloadStatus::Failed;
-            download.error = Some(format!("Import failed: {e}"));
-        }
-        Err(e) => {
-            tracing::error!(id = %download.id, "Import task panicked: {e}");
-            download.status = DownloadStatus::Failed;
-            download.error = Some(format!("Import task panicked: {e}"));
-        }
-    }
-
-    download.touch();
-    if let Err(e) = repository.update_download(download) {
-        tracing::error!(id = %download.id, "Failed to update download after import: {e}");
     }
 }
 
@@ -305,6 +335,14 @@ mod tests {
         );
     }
 
+    fn new_app_with_store(store: Arc<RedbStore>, client: Arc<dyn TorrentClient>) -> App {
+        App::new(
+            store as Arc<dyn DownloadRepository>,
+            client,
+            Duration::from_secs(60),
+        )
+    }
+
     #[tokio::test]
     async fn import_download_transitions_to_imported_on_success() {
         let src_dir = tempfile::tempdir().unwrap();
@@ -317,21 +355,20 @@ mod tests {
         let uri: MagnetUri = MAGNET.parse().unwrap();
         let mut dl =
             crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
+        dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();
 
-        import_download(
-            &(store.clone() as Arc<dyn DownloadRepository>),
-            &mut dl,
-            src_dir.path().to_str().unwrap(),
-        )
-        .await;
+        let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
+        app.import_download(&mut dl, src_dir.path().to_str().unwrap())
+            .await;
 
+        let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
         assert_eq!(dl.status, DownloadStatus::Imported);
         assert_eq!(
             dl.imported_path.as_deref(),
-            Some(dst_dir.path().to_str().unwrap())
+            Some(expected_dst.to_str().unwrap())
         );
-        assert!(dst_dir.path().join("movie.mkv").exists());
+        assert!(expected_dst.join("movie.mkv").exists());
 
         let persisted = store.get_download(dl.id).unwrap();
         assert_eq!(persisted.status, DownloadStatus::Imported);
@@ -344,14 +381,11 @@ mod tests {
             Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
         let uri: MagnetUri = MAGNET.parse().unwrap();
         let mut dl = crate::app::model::Download::new(uri, "/nonexistent/target".to_owned());
+        dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();
 
-        import_download(
-            &(store.clone() as Arc<dyn DownloadRepository>),
-            &mut dl,
-            "/nonexistent/source",
-        )
-        .await;
+        let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
+        app.import_download(&mut dl, "/nonexistent/source").await;
 
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
