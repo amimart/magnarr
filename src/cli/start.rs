@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use crate::app::App;
 use crate::cli::config::TorrentClientConfig;
@@ -36,7 +35,7 @@ pub async fn run(args: StartArgs) {
             });
             (
                 Arc::new(client) as Arc<dyn crate::app::torrent::TorrentClient>,
-                Duration::from_secs(qb.poll_interval_secs),
+                cfg.app.poll_interval,
             )
         }
     };

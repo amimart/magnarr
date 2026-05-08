@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use thiserror::Error;
 
@@ -6,9 +7,18 @@ use super::StartArgs;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Config {
+    pub app: AppConfig,
     pub server: ServerConfig,
     pub store: StoreConfig,
     pub torrent_client: TorrentClientConfig,
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AppConfig {
+    /// How often the app polls the torrent client for status updates.
+    /// Accepts humantime strings: "30s", "1m", "5 minutes", etc.
+    #[serde(with = "humantime_serde")]
+    pub poll_interval: Duration,
 }
 
 /// Discriminated union of supported torrent clients.
@@ -46,8 +56,6 @@ pub struct QbittorrentConfig {
     pub username: String,
     #[serde(default = "default_qb_password")]
     pub password: String,
-    #[serde(default = "default_qb_poll_interval_secs")]
-    pub poll_interval_secs: u64,
 }
 
 fn default_qb_host() -> String {
@@ -60,10 +68,6 @@ fn default_qb_username() -> String {
 
 fn default_qb_password() -> String {
     "adminadmin".to_owned()
-}
-
-fn default_qb_poll_interval_secs() -> u64 {
-    30
 }
 
 #[derive(Debug, Error)]
@@ -79,11 +83,18 @@ pub enum ConfigError {
 /// Partial config overlaid from a config file (all fields optional for merging).
 #[derive(Debug, Default, serde::Deserialize)]
 struct FileConfig {
+    app: Option<FileAppConfig>,
     server: Option<FileServerConfig>,
     store: Option<FileStoreConfig>,
     /// When present, replaces the entire torrent_client block.
     /// Fields within the variant use serde defaults, so partial specification is fine.
     torrent_client: Option<TorrentClientConfig>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct FileAppConfig {
+    /// Humantime duration string: "30s", "1m", "5 minutes", etc.
+    poll_interval: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -98,6 +109,9 @@ struct FileStoreConfig {
 
 fn default_config() -> Config {
     Config {
+        app: AppConfig {
+            poll_interval: Duration::from_secs(30),
+        },
         server: ServerConfig {
             listen_addr: "127.0.0.1:8080".to_owned(),
         },
@@ -108,7 +122,6 @@ fn default_config() -> Config {
             host: default_qb_host(),
             username: default_qb_username(),
             password: default_qb_password(),
-            poll_interval_secs: default_qb_poll_interval_secs(),
         }),
     }
 }
@@ -125,6 +138,13 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
         let contents = std::fs::read_to_string(config_path)?;
         let file_cfg: FileConfig = serde_yaml::from_str(&contents)?;
 
+        if let Some(app) = file_cfg.app {
+            if let Some(s) = app.poll_interval {
+                if let Ok(d) = humantime::parse_duration(&s) {
+                    cfg.app.poll_interval = d;
+                }
+            }
+        }
         if let Some(server) = file_cfg.server {
             if let Some(addr) = server.listen_addr {
                 cfg.server.listen_addr = addr;
@@ -143,6 +163,11 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     }
 
     // --- env vars ---
+    if let Ok(s) = std::env::var("MAGNARR_APP_POLL_INTERVAL") {
+        if let Ok(d) = humantime::parse_duration(&s) {
+            cfg.app.poll_interval = d;
+        }
+    }
     if let Ok(addr) = std::env::var("MAGNARR_SERVER_LISTEN_ADDR") {
         cfg.server.listen_addr = addr;
     }
@@ -159,11 +184,6 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
             }
             if let Ok(password) = std::env::var("MAGNARR_QB_PASSWORD") {
                 qb.password = password;
-            }
-            if let Ok(secs) = std::env::var("MAGNARR_QB_POLL_INTERVAL_SECS") {
-                if let Ok(v) = secs.parse() {
-                    qb.poll_interval_secs = v;
-                }
             }
         }
     }
@@ -325,13 +345,20 @@ mod tests {
         std::env::remove_var("MAGNARR_QB_HOST");
         std::env::remove_var("MAGNARR_QB_USERNAME");
         std::env::remove_var("MAGNARR_QB_PASSWORD");
-        std::env::remove_var("MAGNARR_QB_POLL_INTERVAL_SECS");
 
         let cfg = load_config(default_start_args()).unwrap();
         let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
         assert_eq!(qb.host, "http://localhost:8080");
         assert_eq!(qb.username, "admin");
-        assert_eq!(qb.poll_interval_secs, 30);
+    }
+
+    #[test]
+    fn default_app_poll_interval_is_30s() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
+
+        let cfg = load_config(default_start_args()).unwrap();
+        assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(30));
     }
 
     #[test]
@@ -340,14 +367,13 @@ mod tests {
         std::env::remove_var("MAGNARR_QB_HOST");
         std::env::remove_var("MAGNARR_QB_USERNAME");
         std::env::remove_var("MAGNARR_QB_PASSWORD");
-        std::env::remove_var("MAGNARR_QB_POLL_INTERVAL_SECS");
 
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.yaml");
         let mut f = std::fs::File::create(&config_path).unwrap();
         writeln!(
             f,
-            "torrent_client:\n  kind: qbittorrent\n  host: http://myserver:9090\n  poll_interval_secs: 60"
+            "torrent_client:\n  kind: qbittorrent\n  host: http://myserver:9090"
         )
         .unwrap();
 
@@ -359,25 +385,51 @@ mod tests {
         let cfg = load_config(args).unwrap();
         let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
         assert_eq!(qb.host, "http://myserver:9090");
-        assert_eq!(qb.poll_interval_secs, 60);
         // Fields not specified in the file fall back to per-field serde defaults.
         assert_eq!(qb.username, "admin");
+    }
+
+    #[test]
+    fn config_file_app_poll_interval_is_loaded() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
+
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.yaml");
+        let mut f = std::fs::File::create(&config_path).unwrap();
+        writeln!(f, "app:\n  poll_interval: 2m").unwrap();
+
+        let args = StartArgs {
+            config: config_path.to_str().unwrap().to_owned(),
+            server_listen_addr: None,
+            store_path: None,
+        };
+        let cfg = load_config(args).unwrap();
+        assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(120));
     }
 
     #[test]
     fn env_vars_override_qbittorrent_fields() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("MAGNARR_QB_HOST", "http://envhost:7777");
-        std::env::set_var("MAGNARR_QB_POLL_INTERVAL_SECS", "120");
         std::env::remove_var("MAGNARR_QB_USERNAME");
         std::env::remove_var("MAGNARR_QB_PASSWORD");
 
         let cfg = load_config(default_start_args()).unwrap();
         std::env::remove_var("MAGNARR_QB_HOST");
-        std::env::remove_var("MAGNARR_QB_POLL_INTERVAL_SECS");
 
         let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
         assert_eq!(qb.host, "http://envhost:7777");
-        assert_eq!(qb.poll_interval_secs, 120);
+    }
+
+    #[test]
+    fn env_var_app_poll_interval_overrides_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("MAGNARR_APP_POLL_INTERVAL", "5m");
+
+        let cfg = load_config(default_start_args()).unwrap();
+        std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
+
+        assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(300));
     }
 }
