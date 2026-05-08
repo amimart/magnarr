@@ -1,4 +1,5 @@
 pub mod download;
+pub mod error;
 pub mod model;
 pub mod torrent;
 
