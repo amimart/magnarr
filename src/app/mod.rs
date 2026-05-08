@@ -1,15 +1,28 @@
 pub mod download;
 pub mod model;
+pub mod torrent;
+
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::app::download::DownloadRepository;
 
 pub struct App {
-    #[allow(dead_code)]
-    repository: Box<dyn DownloadRepository>,
+    repository: Arc<dyn DownloadRepository>,
+    torrent_client: Arc<dyn TorrentClient>,
 }
 
 impl App {
-    pub fn new(repository: Box<dyn DownloadRepository>) -> Self {
-        Self { repository }
+    pub fn new(
+        repository: Arc<dyn DownloadRepository>,
+        torrent_client: Arc<dyn TorrentClient>,
+    ) -> Self {
+        Self {
+            repository,
+            torrent_client,
+        }
     }
 }
+    }
+}
+
