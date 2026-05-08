@@ -29,13 +29,13 @@ pub async fn run(args: StartArgs) {
     };
 
     let torrent_client = match cfg.torrent_client {
-        TorrentClientConfig::Qbittorrent(qb) => Arc::new(QbittorrentClient::new(
-            QbConnectionConfig {
+        TorrentClientConfig::Qbittorrent(qb) => {
+            Arc::new(QbittorrentClient::new(QbConnectionConfig {
                 host: qb.host,
                 username: qb.username,
                 password: qb.password,
-            },
-        )) as Arc<dyn crate::app::torrent::TorrentClient>,
+            })) as Arc<dyn crate::app::torrent::TorrentClient>
+        }
     };
 
     let token = CancellationToken::new();
