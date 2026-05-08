@@ -76,6 +76,7 @@ impl App {
         tokio::spawn(async move {
             loop {
                 app.poll_downloads(&token).await;
+                app.import_downloads(&token).await;
                 tokio::select! {
                     _ = tokio::time::sleep(app.poll_interval) => {}
                     _ = token.cancelled() => {
@@ -88,7 +89,6 @@ impl App {
     }
 
     async fn poll_downloads(&self, token: &CancellationToken) {
-        // Pass 1: sync torrent status for active downloads.
         let mut active = match self
             .repository
             .list_downloads_by_status(DownloadStatus::Submitted)
@@ -139,8 +139,9 @@ impl App {
                 }
             }
         }
+    }
 
-        // Pass 2: copy files for downloads that are ready to import.
+    async fn import_downloads(&self, token: &CancellationToken) {
         let importing = match self
             .repository
             .list_downloads_by_status(DownloadStatus::Importing)
