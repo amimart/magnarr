@@ -87,6 +87,10 @@ pub struct Download {
 }
 
 impl Download {
+    pub fn touch(&mut self) {
+        self.updated_at = chrono::Utc::now();
+    }
+
     pub fn new(magnet_uri: MagnetUri, target_dir: String) -> Self {
         let now = chrono::Utc::now();
         let info_hash = magnet_uri.info_hash().map(str::to_owned);
