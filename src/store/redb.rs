@@ -1,10 +1,24 @@
 use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::app::download::{DownloadRepository, RepositoryError};
-use crate::app::model::Download;
+use crate::app::model::{Download, DownloadStatus};
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 const INDEXES: TableDefinition<&str, &str> = TableDefinition::new("indexes");
+/// Key: `{status}:{uuid}`, value: uuid. Enables O(log n) lookup by status.
+const STATUS_INDEX: TableDefinition<&str, &str> = TableDefinition::new("status_index");
+
+fn status_prefix(status: DownloadStatus) -> &'static str {
+    match status {
+        DownloadStatus::Queued => "queued",
+        DownloadStatus::Submitted => "submitted",
+        DownloadStatus::Downloading => "downloading",
+        DownloadStatus::Completed => "completed",
+        DownloadStatus::Importing => "importing",
+        DownloadStatus::Imported => "imported",
+        DownloadStatus::Failed => "failed",
+    }
+}
 
 pub struct RedbStore {
     db: Database,
@@ -29,6 +43,8 @@ impl RedbStore {
             tx.open_table(DOWNLOADS)
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             tx.open_table(INDEXES)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            tx.open_table(STATUS_INDEX)
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         }
         tx.commit()
@@ -74,6 +90,14 @@ impl DownloadRepository for RedbStore {
                     .insert(index_key.as_str(), id_str.as_str())
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             }
+
+            let status_key = format!("{}:{id_str}", status_prefix(download.status));
+            let mut status_idx = tx
+                .open_table(STATUS_INDEX)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            status_idx
+                .insert(status_key.as_str(), id_str.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         }
         tx.commit()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
@@ -167,9 +191,41 @@ impl DownloadRepository for RedbStore {
             let mut table = tx
                 .open_table(DOWNLOADS)
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+            // Read old status before overwriting so we can update the index.
+            let old_status = {
+                let entry = table
+                    .get(id_str.as_str())
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                entry
+                    .map(|v| {
+                        serde_json::from_str::<Download>(v.value())
+                            .map(|d| d.status)
+                            .map_err(|e| RepositoryError::Serialization(e.to_string()))
+                    })
+                    .transpose()?
+            };
+
             table
                 .insert(id_str.as_str(), json.as_str())
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+            // Update the status index only when the status actually changed.
+            if old_status.as_ref() != Some(&download.status) {
+                let mut status_idx = tx
+                    .open_table(STATUS_INDEX)
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                if let Some(old) = old_status {
+                    let old_key = format!("{}:{id_str}", status_prefix(old));
+                    status_idx
+                        .remove(old_key.as_str())
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                }
+                let new_key = format!("{}:{id_str}", status_prefix(download.status));
+                status_idx
+                    .insert(new_key.as_str(), id_str.as_str())
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            }
         }
         tx.commit()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
@@ -212,10 +268,64 @@ impl DownloadRepository for RedbStore {
                     .remove(index_key.as_str())
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             }
+
+            let status_key = format!("{}:{id_str}", status_prefix(download.status));
+            let mut status_idx = tx
+                .open_table(STATUS_INDEX)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            status_idx
+                .remove(status_key.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         }
         tx.commit()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         Ok(())
+    }
+
+    fn list_downloads_by_status(
+        &self,
+        status: crate::app::model::DownloadStatus,
+    ) -> Result<Vec<Download>, RepositoryError> {
+        let prefix = status_prefix(status);
+        // `;` (0x3B) is the next ASCII char after `:` (0x3A); UUID chars are all below it.
+        let start = format!("{prefix}:");
+        let end = format!("{prefix};");
+
+        let tx = self
+            .db
+            .begin_read()
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+        let ids: Vec<String> = {
+            let idx = tx
+                .open_table(STATUS_INDEX)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            idx.range(start.as_str()..end.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                .map(|e| {
+                    e.map(|(_, v)| v.value().to_owned())
+                        .map_err(|err: redb::StorageError| {
+                            RepositoryError::Backend(err.to_string())
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let table = tx
+            .open_table(DOWNLOADS)
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+        let mut results = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(entry) = table
+                .get(id.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+            {
+                let dl: Download = serde_json::from_str(entry.value())
+                    .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
+                results.push(dl);
+            }
+        }
+        Ok(results)
     }
 }
 
@@ -323,6 +433,59 @@ mod tests {
 
         let result = store.get_download(dl.id);
         assert!(matches!(result, Err(RepositoryError::NotFound)));
+    }
+
+    #[test]
+    fn list_downloads_by_status_returns_only_matching() {
+        let (store, _dir) = new_store();
+
+        let dl1 = test_download(); // Queued
+        let mut dl2 = test_download();
+        dl2.status = DownloadStatus::Submitted;
+        let mut dl3 = test_download();
+        dl3.status = DownloadStatus::Downloading;
+
+        store.create_download(&dl1).unwrap();
+        store.create_download(&dl2).unwrap();
+        store.create_download(&dl3).unwrap();
+
+        let queued = store.list_downloads_by_status(DownloadStatus::Queued).unwrap();
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].id, dl1.id);
+
+        let submitted = store.list_downloads_by_status(DownloadStatus::Submitted).unwrap();
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(submitted[0].id, dl2.id);
+    }
+
+    #[test]
+    fn list_downloads_by_status_reflects_updates() {
+        let (store, _dir) = new_store();
+        let dl = test_download(); // Queued
+        store.create_download(&dl).unwrap();
+
+        let mut updated = dl.clone();
+        updated.status = DownloadStatus::Submitted;
+        updated.touch();
+        store.update_download(&updated).unwrap();
+
+        let queued = store.list_downloads_by_status(DownloadStatus::Queued).unwrap();
+        assert!(queued.is_empty(), "should no longer appear as Queued");
+
+        let submitted = store.list_downloads_by_status(DownloadStatus::Submitted).unwrap();
+        assert_eq!(submitted.len(), 1);
+        assert_eq!(submitted[0].id, dl.id);
+    }
+
+    #[test]
+    fn delete_download_removes_status_index_entry() {
+        let (store, _dir) = new_store();
+        let dl = test_download();
+        store.create_download(&dl).unwrap();
+        store.delete_download(dl.id).unwrap();
+
+        let results = store.list_downloads_by_status(DownloadStatus::Queued).unwrap();
+        assert!(results.is_empty());
     }
 
     #[test]
