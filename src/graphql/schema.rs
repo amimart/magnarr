@@ -46,4 +46,3 @@ pub fn build_schema_sdl() -> String {
         .finish()
         .sdl()
 }
-
