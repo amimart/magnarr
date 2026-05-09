@@ -1,0 +1,41 @@
+name: GraphQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema-up-to-date:
+    name: Schema is up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo run --bin export-schema -- schema.graphql.generated
+
+      - run: diff -u schema.graphql schema.graphql.generated
+
+  breaking-changes:
+    name: Detect breaking changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get main branch schema
+        run: git show origin/main:schema.graphql > schema-main.graphql
+
+      - name: Check for breaking changes
+        run: npx --yes @graphql-inspector/cli diff schema-main.graphql schema.graphql
