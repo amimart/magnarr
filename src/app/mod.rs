@@ -70,7 +70,7 @@ impl App {
     /// Spawns a background task that periodically syncs active download
     /// statuses from the torrent client into the repository.
     /// The task exits cleanly when `token` is cancelled.
-    pub async fn run(&self, token: CancellationToken) {
+    pub fn start(&self, token: CancellationToken) {
         let app = self.clone();
         tokio::spawn(async move {
             loop {

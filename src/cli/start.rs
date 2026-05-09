@@ -42,6 +42,7 @@ pub async fn run(args: StartArgs) {
 
     let token = CancellationToken::new();
     let app = App::new(Arc::new(repo), torrent_client, cfg.app.poll_interval);
+    app.start(token.clone());
 
     let graphql = GraphqlServer::new(app.clone());
     let router = graphql.axum_router();
@@ -65,8 +66,6 @@ pub async fn run(args: StartArgs) {
             tracing::error!("HTTP server error: {e}");
         }
     });
-
-    app.run(token.clone()).await;
 
     tracing::info!("Magnarr started successfully");
 
