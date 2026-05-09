@@ -1,8 +1,39 @@
+"""
+Implement the DateTime<Utc> scalar
+
+The input/output is a string in RFC3339 format.
+"""
+scalar DateTime
+
+type Download {
+	id: UUID!
+	magnetUri: MagnetUri!
+	status: DownloadStatus!
+	targetDir: String!
+	createdAt: DateTime!
+	updatedAt: DateTime!
+	importedPath: String
+	error: String
+}
+
+enum DownloadStatus {
+	QUEUED
+	SUBMITTED
+	DOWNLOADING
+	COMPLETED
+	IMPORTING
+	IMPORTED
+	FAILED
+}
+
+scalar MagnetUri
+
 type MutationRoot {
 	"""
-	Placeholder — real mutations will be added as features land.
+	Submits a new download: validates the magnet, persists it, and hands it
+	off to the torrent client. Returns the created download record.
 	"""
-	placeholder: Boolean!
+	download(magnet: MagnetUri!, targetDir: String!): Download!
 }
 
 type QueryRoot {
@@ -13,6 +44,18 @@ type QueryRoot {
 }
 
 """
+A UUID is a unique 128-bit number, stored as 16 octets. UUIDs are parsed as
+Strings within GraphQL. UUIDs are used to assign unique identifiers to
+entities without requiring a central allocating authority.
+
+# References
+
+* [Wikipedia: Universally Unique Identifier](http://en.wikipedia.org/wiki/Universally_unique_identifier)
+* [RFC4122: A Universally Unique Identifier (UUID) URN Namespace](http://tools.ietf.org/html/rfc4122)
+"""
+scalar UUID
+
+"""
 Directs the executor to include this field or fragment only when the `if` argument is true.
 """
 directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
@@ -20,6 +63,10 @@ directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
 Directs the executor to skip this field or fragment when the `if` argument is true.
 """
 directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+"""
+Provides a scalar specification URL for specifying the behavior of custom scalar types.
+"""
+directive @specifiedBy(url: String!) on SCALAR
 schema {
 	query: QueryRoot
 	mutation: MutationRoot
