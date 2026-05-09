@@ -1,3 +1,4 @@
+pub mod scalars;
 pub mod schema;
 
 use async_graphql::http::GraphiQLSource;
