@@ -1,4 +1,4 @@
-.PHONY: lint lint-rust lint-rust-format lint-md lint-yaml build test audit check fix fix-rust fix-md help
+.PHONY: lint lint-rust lint-rust-format lint-md lint-yaml build test audit check fix fix-rust fix-md schema help
 
 BOLD   := \033[1m
 RESET  := \033[0m
@@ -10,7 +10,11 @@ help: ## Show available targets
 	@printf "$(BOLD)Available targets:$(RESET)\n"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)$(BOLD)%-12s$(RESET) %s\n", $$1, $$2}'
 
-lint-rust: ## Lint Rust (clippy)
+schema: ## Generate schema.graphql from the GraphQL schema
+	@printf "$(CYAN)$(BOLD)📄 Generating schema.graphql...$(RESET)\n"
+	cargo run --bin export_schema
+
+lint-rust: ## Lint Rust code with Clippy
 	@printf "$(CYAN)$(BOLD)🦀 Linting Rust...$(RESET)\n"
 	cargo clippy -- -D warnings
 

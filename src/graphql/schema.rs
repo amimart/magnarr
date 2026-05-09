@@ -29,3 +29,10 @@ pub fn build_schema(app: App) -> AppSchema {
         .data(app)
         .finish()
 }
+
+/// Builds the schema without runtime data, used for SDL export.
+pub fn build_schema_sdl() -> String {
+    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+        .finish()
+        .sdl()
+}
