@@ -1,6 +1,5 @@
-use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
+use async_graphql::{Context, EmptySubscription, Object, Schema};
 
-use crate::app::error::AppError;
 use crate::app::App;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
@@ -28,18 +27,10 @@ impl MutationRoot {
         ctx: &Context<'_>,
         magnet: MagnetUri,
         target_dir: String,
-    ) -> Result<Download, Error> {
+    ) -> async_graphql::Result<Download> {
         let app = ctx.data::<App>()?;
-        app.download(magnet.0, target_dir)
-            .await
-            .map(Download::from)
-            .map_err(|e| match e {
-                AppError::AlreadyExists => Error::new("download already exists"),
-                AppError::TorrentClient(e) => {
-                    Error::new(format!("torrent client error: {e}"))
-                }
-                AppError::Repository(e) => Error::new(format!("repository error: {e}")),
-            })
+        let dl = app.download(magnet.0, target_dir).await?;
+        Ok(dl.into())
     }
 }
 
