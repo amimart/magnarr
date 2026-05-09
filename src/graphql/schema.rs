@@ -1,6 +1,8 @@
-use async_graphql::{EmptySubscription, Object, Schema};
+use async_graphql::{Context, EmptySubscription, Object, Schema};
 
 use crate::app::App;
+use crate::graphql::scalars::MagnetUri;
+use crate::graphql::types::Download;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -18,9 +20,17 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
-    /// Placeholder — real mutations will be added as features land.
-    async fn _placeholder(&self) -> bool {
-        false
+    /// Submits a new download: validates the magnet, persists it, and hands it
+    /// off to the torrent client. Returns the created download record.
+    async fn download(
+        &self,
+        ctx: &Context<'_>,
+        magnet: MagnetUri,
+        target_dir: String,
+    ) -> async_graphql::Result<Download> {
+        let app = ctx.data::<App>()?;
+        let dl = app.download(magnet.0, target_dir).await?;
+        Ok(dl.into())
     }
 }
 
