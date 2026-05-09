@@ -25,6 +25,9 @@ humantime = "2"
 humantime-serde = "1"
 async-trait = "0.1"
 tokio-util = "0.7"
+async-graphql = { version = "7", features = ["chrono", "uuid"] }
+async-graphql-axum = "7"
+axum = "0.8"
 
 redb = "2"
 reqwest = { version = "0.12", features = ["json", "cookies"] }
