@@ -29,10 +29,7 @@ impl GraphqlServer {
     }
 }
 
-async fn graphql_handler(
-    State(schema): State<AppSchema>,
-    req: GraphQLRequest,
-) -> GraphQLResponse {
+async fn graphql_handler(State(schema): State<AppSchema>, req: GraphQLRequest) -> GraphQLResponse {
     schema.execute(req.into_inner()).await.into()
 }
 
