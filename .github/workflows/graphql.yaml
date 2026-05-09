@@ -42,4 +42,3 @@ jobs:
       - uses: graphql-hive/graphql-inspector@master
         with:
           schema: 'main:schema.graphql'
-          fail-on-breaking: false
