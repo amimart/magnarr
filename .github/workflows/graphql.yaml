@@ -34,8 +34,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get main branch schema
-        run: git show origin/main:schema.graphql > schema-main.graphql
-
-      - name: Check for breaking changes
-        run: npx --yes @graphql-inspector/cli diff schema-main.graphql schema.graphql
+      - uses: graphql-hive/graphql-inspector@master
+        with:
+          schema: 'main:schema.graphql'
+          fail-on-breaking: false
