@@ -12,7 +12,7 @@ help: ## Show available targets
 
 schema: ## Generate schema.graphql from the GraphQL schema
 	@printf "$(CYAN)$(BOLD)📄 Generating schema.graphql...$(RESET)\n"
-	cargo run --bin export_schema
+	cargo run --bin export-schema
 
 lint-rust: ## Lint Rust code with Clippy
 	@printf "$(CYAN)$(BOLD)🦀 Linting Rust...$(RESET)\n"

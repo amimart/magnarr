@@ -15,7 +15,7 @@ jobs:
     name: Schema is up to date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -24,3 +24,18 @@ jobs:
       - run: cargo run --bin export-schema -- schema.graphql.generated
 
       - run: diff -u schema.graphql schema.graphql.generated
+
+  breaking-changes:
+    name: Detect breaking changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get main branch schema
+        run: git show origin/main:schema.graphql > schema-main.graphql
+
+      - name: Check for breaking changes
+        run: npx --yes @graphql-inspector/cli diff schema-main.graphql schema.graphql

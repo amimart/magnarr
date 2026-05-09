@@ -8,6 +8,10 @@ description = "magnarr CLI"
 name = "magnarr"
 path = "src/main.rs"
 
+[[bin]]
+name = "export-schema"
+path = "src/bin/export_schema.rs"
+
 [lib]
 name = "magnarr"
 path = "src/lib.rs"
