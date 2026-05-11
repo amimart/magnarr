@@ -176,7 +176,6 @@ impl TorrentClient for QbittorrentClient {
             hash: t["hash"].as_str().unwrap_or("").to_owned(),
             state: parse_state(t["state"].as_str().unwrap_or("")),
             name: t["name"].as_str().unwrap_or("").to_owned(),
-            save_path: t["save_path"].as_str().unwrap_or("").to_owned(),
         })
     }
 }

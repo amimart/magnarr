@@ -165,7 +165,8 @@ impl App {
             };
             match self.torrent_client.status(info_hash).await {
                 Ok(ts) if ts.state == TorrentState::Seeding => {
-                    self.import_download(&mut download, &ts.save_path).await;
+                    let src = self.download_dir.join(&ts.name);
+                    self.import_download(&mut download, &src).await;
                 }
                 _ => {} // Not seeding yet or error — retry next cycle.
             }
@@ -175,20 +176,19 @@ impl App {
     /// Copies the torrent save directory into `download.target_dir` and
     /// transitions the download to `Imported` or `Failed`.
     /// Assumes the download is already in `Importing` status.
-    async fn import_download(&self, download: &mut Download, save_path: &str) {
-        let src = std::path::PathBuf::from(save_path);
-
+    async fn import_download(&self, download: &mut Download, src: &std::path::Path) {
         let dir_name = match src.file_name() {
             Some(n) => n.to_owned(),
             None => {
-                tracing::error!(id = %download.id, "save_path has no file name component: {save_path}");
+                tracing::error!(id = %download.id, "src path has no file name component: {}", src.display());
                 download.status = DownloadStatus::Failed;
-                download.error = Some(format!("save_path has no file name: {save_path}"));
+                download.error = Some(format!("src path has no file name: {}", src.display()));
                 download.touch();
                 let _ = self.repository.update_download(download);
                 return;
             }
         };
+        let src = src.to_owned();
         let final_dst = std::path::PathBuf::from(&download.target_dir).join(&dir_name);
 
         match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &final_dst)).await {
@@ -365,7 +365,7 @@ mod tests {
         store.create_download(&dl).unwrap();
 
         let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        app.import_download(&mut dl, src_dir.path().to_str().unwrap())
+        app.import_download(&mut dl, src_dir.path())
             .await;
 
         let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
@@ -391,7 +391,7 @@ mod tests {
         store.create_download(&dl).unwrap();
 
         let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        app.import_download(&mut dl, "/nonexistent/source").await;
+        app.import_download(&mut dl, std::path::Path::new("/nonexistent/source")).await;
 
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
