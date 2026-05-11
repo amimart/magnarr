@@ -2,6 +2,7 @@ pub mod download;
 pub mod error;
 pub mod torrent;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,6 +18,8 @@ pub struct App {
     repository: Arc<dyn DownloadRepository>,
     torrent_client: Arc<dyn TorrentClient>,
     poll_interval: Duration,
+    /// Directory where the torrent client saves completed downloads.
+    pub download_dir: PathBuf,
 }
 
 impl App {
@@ -24,11 +27,13 @@ impl App {
         repository: Arc<dyn DownloadRepository>,
         torrent_client: Arc<dyn TorrentClient>,
         poll_interval: Duration,
+        download_dir: PathBuf,
     ) -> Self {
         Self {
             repository,
             torrent_client,
             poll_interval,
+            download_dir,
         }
     }
 
@@ -265,7 +270,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.redb");
         let store = RedbStore::new(path.to_str().unwrap()).unwrap();
-        let app = App::new(Arc::new(store), client, Duration::from_secs(60));
+        let app = App::new(Arc::new(store), client, Duration::from_secs(60), dir.path().join("downloads"));
         (app, dir)
     }
 
@@ -340,6 +345,7 @@ mod tests {
             store as Arc<dyn DownloadRepository>,
             client,
             Duration::from_secs(60),
+            PathBuf::from("/downloads"),
         )
     }
 
