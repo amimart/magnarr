@@ -24,15 +24,12 @@ pub enum TorrentState {
 
 #[derive(Debug, Clone)]
 pub struct TorrentStatus {
+    /// Hash of the torrent.
+    pub hash: String,
+    /// Current state of the torrent.
     pub state: TorrentState,
-    /// Download progress from 0.0 to 1.0.
-    pub progress: f32,
-    /// Estimated seconds remaining, if known.
-    pub eta: Option<u64>,
-    pub download_speed: u64,
-    pub upload_speed: u64,
-    pub peers: u32,
-    pub save_path: String,
+    /// Torrent name.
+    pub name: String,
 }
 
 #[async_trait]

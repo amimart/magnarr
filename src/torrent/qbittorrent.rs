@@ -173,13 +173,9 @@ impl TorrentClient for QbittorrentClient {
             .ok_or_else(|| TorrentClientError::NotFound(info_hash.to_owned()))?;
 
         Ok(TorrentStatus {
+            hash: t["hash"].as_str().unwrap_or("").to_owned(),
             state: parse_state(t["state"].as_str().unwrap_or("")),
-            progress: t["progress"].as_f64().unwrap_or(0.0) as f32,
-            eta: t["eta"].as_u64().filter(|&v| v < u32::MAX as u64),
-            download_speed: t["dlspeed"].as_u64().unwrap_or(0),
-            upload_speed: t["upspeed"].as_u64().unwrap_or(0),
-            peers: t["num_leechs"].as_u64().unwrap_or(0) as u32,
-            save_path: t["save_path"].as_str().unwrap_or("").to_owned(),
+            name: t["name"].as_str().unwrap_or("").to_owned(),
         })
     }
 }
