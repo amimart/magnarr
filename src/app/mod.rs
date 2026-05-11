@@ -1,6 +1,5 @@
 pub mod download;
 pub mod error;
-pub mod model;
 pub mod torrent;
 
 use std::sync::Arc;
@@ -10,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::download::DownloadRepository;
 use crate::app::error::AppError;
-use crate::app::model::{Download, DownloadStatus, MagnetUri};
-use crate::app::torrent::{TorrentClient, TorrentState};
+use crate::app::torrent::{TorrentClient};
+use crate::types::{Download, DownloadStatus, MagnetUri, TorrentState};
 
 #[derive(Clone)]
 pub struct App {
@@ -231,9 +230,10 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::torrent::{TorrentClientError, TorrentStatus};
+    use crate::app::torrent::{TorrentClientError};
     use crate::store::redb::RedbStore;
     use async_trait::async_trait;
+    use crate::types::TorrentStatus;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
 
@@ -354,7 +354,7 @@ mod tests {
             Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
         let uri: MagnetUri = MAGNET.parse().unwrap();
         let mut dl =
-            crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
+            Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
         dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();
 
@@ -380,7 +380,7 @@ mod tests {
         let store =
             Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
         let uri: MagnetUri = MAGNET.parse().unwrap();
-        let mut dl = crate::app::model::Download::new(uri, "/nonexistent/target".to_owned());
+        let mut dl = Download::new(uri, "/nonexistent/target".to_owned());
         dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();
 

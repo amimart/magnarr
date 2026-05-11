@@ -2,7 +2,7 @@ use async_graphql::{Enum, Object};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
-use crate::app::model::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
+use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 use crate::graphql::scalars::MagnetUri;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]

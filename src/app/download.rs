@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::app::model::Download;
+use crate::types::{Download, DownloadStatus};
 
 #[derive(Debug, Error)]
 pub enum RepositoryError {
@@ -21,7 +21,7 @@ pub trait DownloadRepository: Send + Sync {
     fn list_downloads(&self) -> Result<Vec<Download>, RepositoryError>;
     fn list_downloads_by_status(
         &self,
-        status: crate::app::model::DownloadStatus,
+        status: DownloadStatus,
     ) -> Result<Vec<Download>, RepositoryError>;
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError>;
     fn delete_download(&self, id: uuid::Uuid) -> Result<(), RepositoryError>;

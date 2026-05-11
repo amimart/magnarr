@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use tokio::sync::Mutex;
 
-use crate::app::model::MagnetUri;
-use crate::app::torrent::{TorrentClient, TorrentClientError, TorrentState, TorrentStatus};
+use crate::app::torrent::{TorrentClient, TorrentClientError};
+use crate::types::{MagnetUri, TorrentState, TorrentStatus};
 
 #[derive(Debug, Clone)]
 pub struct QbittorrentConfig {

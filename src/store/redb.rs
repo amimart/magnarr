@@ -1,7 +1,7 @@
 use redb::{Database, ReadableTable, TableDefinition};
 
 use crate::app::download::{DownloadRepository, RepositoryError};
-use crate::app::model::{Download, DownloadStatus};
+use crate::types::{Download, DownloadStatus};
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 const INDEXES: TableDefinition<&str, &str> = TableDefinition::new("indexes");
@@ -284,7 +284,7 @@ impl DownloadRepository for RedbStore {
 
     fn list_downloads_by_status(
         &self,
-        status: crate::app::model::DownloadStatus,
+        status: DownloadStatus,
     ) -> Result<Vec<Download>, RepositoryError> {
         let prefix = status_prefix(status);
         // `;` (0x3B) is the next ASCII char after `:` (0x3A); UUID chars are all below it.
@@ -332,7 +332,6 @@ impl DownloadRepository for RedbStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::model::{Download, DownloadStatus};
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
 
