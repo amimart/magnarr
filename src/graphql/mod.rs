@@ -1,6 +1,6 @@
-pub mod scalars;
+mod scalars;
 pub mod schema;
-pub mod types;
+mod types;
 
 use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
