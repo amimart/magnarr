@@ -15,4 +15,6 @@ pub struct TorrentStatus {
     pub state: TorrentState,
     /// Torrent name.
     pub name: String,
+    /// Directory where the torrent client saved the files.
+    pub save_path: String,
 }
