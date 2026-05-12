@@ -17,6 +17,35 @@ type Download {
 	error: String
 }
 
+type DownloadConnection {
+	"""
+	Information to aid in pagination.
+	"""
+	pageInfo: PageInfo!
+	"""
+	A list of edges.
+	"""
+	edges: [DownloadEdge!]!
+	"""
+	A list of nodes.
+	"""
+	nodes: [Download!]!
+}
+
+"""
+An edge in a connection.
+"""
+type DownloadEdge {
+	"""
+	The item at the end of the edge
+	"""
+	node: Download!
+	"""
+	A cursor for use in pagination
+	"""
+	cursor: String!
+}
+
 enum DownloadStatus {
 	QUEUED
 	SUBMITTED
@@ -37,11 +66,34 @@ type MutationRoot {
 	download(magnet: MagnetUri!, targetDir: String!): Download!
 }
 
+"""
+Information about pagination in a connection
+"""
+type PageInfo {
+	"""
+	When paginating backwards, are there more items?
+	"""
+	hasPreviousPage: Boolean!
+	"""
+	When paginating forwards, are there more items?
+	"""
+	hasNextPage: Boolean!
+	"""
+	When paginating backwards, the cursor to continue.
+	"""
+	startCursor: String
+	"""
+	When paginating forwards, the cursor to continue.
+	"""
+	endCursor: String
+}
+
 type QueryRoot {
 	"""
 	Health check — returns "ok" when the server is running.
 	"""
 	health: String!
+	downloads(after: String, first: Int): DownloadConnection!
 }
 
 """
