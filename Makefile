@@ -1,4 +1,4 @@
-.PHONY: all lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test audit check fix fix-rust fix-md schema local-init local-start local-stop local-clean clean help
+.PHONY: all lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test test-rust audit check fix fix-rust fix-md schema local-init local-start local-stop local-clean clean help
 
 # Constants:
 TARGET_FOLDER       = target
@@ -62,7 +62,9 @@ build-docker: ## Build the Docker image
 	docker build --tag $(DOCKER_IMAGE) .
 
 ## Test:
-test: ## Run tests
+test: test-rust ## Run all tests
+
+test-rust: ## Run Rust tests
 	@printf "$(COLOR_GREEN)$(BOLD)🧪 Running tests...$(COLOR_RESET)\n"
 	cargo test
 
