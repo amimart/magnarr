@@ -163,20 +163,15 @@ impl App {
             if token.is_cancelled() {
                 break;
             }
-            match self.torrent_client.status(&download.info_hash).await {
-                Ok(ts) if ts.state == TorrentState::Seeding => {
-                    let src = self.download_dir.join(&ts.name);
-                    self.import_download(&mut download, &src).await;
-                }
-                _ => {} // Not seeding yet or error — retry next cycle.
-            }
+            self.import_download(&mut download).await;
         }
     }
 
     /// Copies the torrent save directory into `download.target_dir` and
     /// transitions the download to `Imported` or `Failed`.
     /// Assumes the download is already in `Importing` status.
-    async fn import_download(&self, download: &mut Download, src: &std::path::Path) {
+    async fn import_download(&self, download: &mut Download) {
+        let src = self.download_dir.join(&download.name);
         let dir_name = match src.file_name() {
             Some(n) => n.to_owned(),
             None => {
@@ -189,7 +184,7 @@ impl App {
             }
         };
         let src = src.to_owned();
-        let final_dst = std::path::PathBuf::from(&download.target_dir).join(&dir_name);
+        let final_dst = PathBuf::from(&download.target_dir).join(&dir_name);
 
         match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &final_dst)).await {
             Ok(Ok(())) => {
@@ -366,7 +361,7 @@ mod tests {
         store.create_download(&dl).unwrap();
 
         let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        app.import_download(&mut dl, src_dir.path())
+        app.import_download(&mut dl)
             .await;
 
         let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
@@ -392,7 +387,7 @@ mod tests {
         store.create_download(&dl).unwrap();
 
         let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        app.import_download(&mut dl, std::path::Path::new("/nonexistent/source")).await;
+        app.import_download(&mut dl).await;
 
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
