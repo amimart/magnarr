@@ -47,7 +47,7 @@ impl FromStr for Magnet {
             }
         }
 
-        hash.ok_or_else(|| MagnetParseError::InvalidScheme(parsed.scheme().to_owned()))
+        hash.ok_or_else(|| MagnetParseError::MissingInfoHash(s.to_owned()))
             .map(|h| Magnet{
                 raw: s.to_owned(),
                 info_hash: h,
@@ -87,63 +87,68 @@ impl<'de> serde::Deserialize<'de> for Magnet {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::MagnetParseError;
     use super::*;
 
-    const MAGNET_WITH_HASH: &str =
-        "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
-    const MAGNET_WITHOUT_NAME: &str =
-        "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12";
-    const MAGNET_NO_HASH: &str = "magnet:?dn=nodisplay";
+    struct ParseOk {
+        input: &'static str,
+        info_hash: &'static str,
+        name: Option<&'static str>,
+    }
 
-    #[test]
-    fn valid_magnet_parses_successfully() {
-        let result = MAGNET_WITH_HASH.parse::<Magnet>();
-        assert!(result.is_ok());
+    struct ParseErr {
+        input: &'static str,
+        error: fn(&MagnetParseError) -> bool,
     }
 
     #[test]
-    fn info_hash_extracts_correct_hash() {
-        let uri: Magnet = MAGNET_WITH_HASH.parse().unwrap();
-        assert_eq!(
-            uri.info_hash(),
-            "ABCDEF1234567890ABCDEF1234567890ABCDEF12"
-        );
+    fn parse_valid_magnets() {
+        let cases = [
+            ParseOk {
+                input: "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test",
+                info_hash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                name: Some("test"),
+            },
+            ParseOk {
+                input: "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                info_hash: "ABCDEF1234567890ABCDEF1234567890ABCDEF12",
+                name: None,
+            },
+            ParseOk {
+                input: "magnet:?xt=urn:btih:abcdef1234567890abcdef1234567890abcdef12&dn=lower",
+                info_hash: "abcdef1234567890abcdef1234567890abcdef12",
+                name: Some("lower"),
+            },
+        ];
+
+        for case in &cases {
+            let magnet: Magnet = case.input.parse().unwrap_or_else(|e| {
+                panic!("expected Ok for {:?}, got: {e}", case.input)
+            });
+            assert_eq!(magnet.info_hash(), case.info_hash, "info_hash mismatch for {:?}", case.input);
+            assert_eq!(magnet.name(), case.name, "name mismatch for {:?}", case.input);
+        }
     }
 
     #[test]
-    fn name_extracts_correct_name() {
-        let uri: Magnet = MAGNET_WITH_HASH.parse().unwrap();
-        assert_eq!(
-            uri.name(),
-            Some("test"),
-        );
-    }
+    fn parse_invalid_magnets() {
+        let cases = [
+            ParseErr {
+                input: "magnet:?dn=nodisplay",
+                error: |e| matches!(e, MagnetParseError::MissingInfoHash(_)),
+            },
+            ParseErr {
+                input: "https://example.com",
+                error: |e| matches!(e, MagnetParseError::InvalidScheme(_)),
+            },
+            ParseErr {
+                input: "not a uri !!@@##",
+                error: |e| matches!(e, MagnetParseError::InvalidUri(_)),
+            },
+        ];
 
-    #[test]
-    fn magnet_without_name_ok() {
-        let uri: Magnet = MAGNET_WITHOUT_NAME.parse().unwrap();
-        assert_eq!(
-            uri.name(),
-            None,
-        );
-    }
-
-    #[test]
-    fn magnet_without_xt_returns_err() {
-        let result = MAGNET_NO_HASH.parse::<Magnet>();
-        assert!(matches!(result, Err(MagnetParseError::MissingInfoHash(_))));
-    }
-
-    #[test]
-    fn non_magnet_scheme_returns_err() {
-        let result = "https://example.com".parse::<Magnet>();
-        assert!(matches!(result, Err(MagnetParseError::InvalidScheme(_))));
-    }
-
-    #[test]
-    fn garbage_string_returns_err() {
-        let result = "not a uri !!@@##".parse::<Magnet>();
-        assert!(matches!(result, Err(MagnetParseError::InvalidUri(_))));
+        for case in &cases {
+            let err = case.input.parse::<Magnet>().unwrap_err();
+            assert!((case.error)(&err), "unexpected error variant for {:?}: {err}", case.input);
+        }
     }
 }
