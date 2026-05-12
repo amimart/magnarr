@@ -228,7 +228,8 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::torrent::{TorrentClientError};
+    use crate::app::download::RepositoryError;
+    use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use async_trait::async_trait;
     use crate::types::TorrentStatus;
@@ -306,7 +307,7 @@ mod tests {
 
         let res = app.repository.find_by_info_hash(&hash);
         assert!(
-            res.is_ok(),
+            matches!(res, Err(RepositoryError::NotFound)),
             "record should be rolled back on client failure"
         );
     }
