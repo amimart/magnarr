@@ -1,0 +1,35 @@
+services:
+  magnarr:
+    build:
+      context: .
+    image: magnarr:local
+    depends_on:
+      - qbittorrent
+    command:
+      - magnarr
+      - start
+      - --config=/app/config.yaml
+    ports:
+      - "9393:9393"
+    restart: unless-stopped
+    volumes:
+      - ./target/deploy/local/magnarr:/app
+      - ./target/deploy/local/downloads:/downloads
+      - ./target/deploy/local/media:/media
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    environment:
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
+      WEBUI_PORT: 8080
+      TORRENTING_PORT: 6881
+    ports:
+      - "8080:8080"
+      - "6881:6881"
+      - "6881:6881/udp"
+    restart: unless-stopped
+    volumes:
+      - ./target/deploy/local/qBittorrent:/config/qBittorrent
+      - ./target/deploy/local/downloads:/downloads

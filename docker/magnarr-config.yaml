@@ -1,0 +1,12 @@
+app:
+  poll_interval: 10s
+  download_dir: /downloads
+server:
+  listen_addr: localhost:9393
+store:
+  path: /app/data/magnarr.redb
+torrent_client:
+  kind: qbittorrent
+  host: http://qbittorrent:8080
+  username: admin
+  password: adminadmin
