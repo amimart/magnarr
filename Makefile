@@ -1,4 +1,4 @@
-.PHONY: lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test audit check fix fix-rust fix-md schema local-init local-start local-stop local-clean clean help
+.PHONY: all lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test audit check fix fix-rust fix-md schema local-init local-start local-stop local-clean clean help
 
 # Constants:
 TARGET_FOLDER       = target
@@ -19,6 +19,8 @@ COLOR_YELLOW = $(call get_color,setaf,3)
 define get_color
 $(shell tput -Txterm $(1) $(2) 2>/dev/null || echo "")
 endef
+
+all: help
 
 ## Generate:
 schema: ## Generate schema.graphql from the GraphQL schema
