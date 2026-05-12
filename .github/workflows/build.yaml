@@ -23,3 +23,12 @@ jobs:
 
       - name: Build
         run: cargo build --locked
+
+  build-docker:
+    name: Build (Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build Docker image
+        run: docker build --tag magnarr:ci .
