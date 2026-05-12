@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::download::{DownloadRepository, RepositoryError};
 use crate::app::error::AppError;
-use crate::app::torrent::{TorrentClient};
+use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
 #[derive(Clone)]
@@ -132,6 +132,12 @@ impl App {
                         if let Err(e) = self.repository.update_download(&download) {
                             tracing::error!(info_hash = %download.info_hash, "Failed to update download status: {e}");
                         }
+                    }
+                }
+                Err(TorrentClientError::NotFound(_)) => {
+                    tracing::warn!(info_hash = %download.info_hash, "Torrent not found, removing download");
+                    if let Err(e) = self.repository.delete_download(&download.info_hash) {
+                        tracing::error!(info_hash = %download.info_hash, "Failed to remove download: {e}");
                     }
                 }
                 Err(e) => {
