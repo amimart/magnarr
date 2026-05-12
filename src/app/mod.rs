@@ -40,14 +40,10 @@ impl App {
     /// Submits a new download: persists it as `Queued`, sends the magnet to the
     /// torrent client, then transitions to `Submitted`. If the client rejects the
     /// magnet the record is deleted (rollback) and an error is returned.
-    pub async fn download(
-        &self,
-        magnet: Magnet,
-        target_dir: String,
-    ) -> Result<Download, AppError> {
+    pub async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
         match self.repository.find_by_info_hash(magnet.info_hash()) {
             Ok(_) => Err(AppError::AlreadyExists),
-            Err(RepositoryError::NotFound) => { Ok(()) },
+            Err(RepositoryError::NotFound) => Ok(()),
             Err(e) => Err(e.into()),
         }?;
 
@@ -322,7 +318,9 @@ mod tests {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
         let magnet: Magnet = MAGNET.parse().unwrap();
 
-        app.download(magnet.clone(), "/target".to_owned()).await.unwrap();
+        app.download(magnet.clone(), "/target".to_owned())
+            .await
+            .unwrap();
         let result = app.download(magnet, "/target".to_owned()).await;
 
         assert!(matches!(result, Err(AppError::AlreadyExists)));
@@ -338,7 +336,10 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::TorrentClient(_))));
         assert!(
-            matches!(app.repository.find_by_info_hash(&hash), Err(RepositoryError::NotFound)),
+            matches!(
+                app.repository.find_by_info_hash(&hash),
+                Err(RepositoryError::NotFound)
+            ),
             "record should be rolled back on client failure"
         );
     }
@@ -356,7 +357,10 @@ mod tests {
         app.poll_downloads(&token).await;
 
         assert!(
-            matches!(app.repository.find_by_info_hash(INFO_HASH), Err(RepositoryError::NotFound)),
+            matches!(
+                app.repository.find_by_info_hash(INFO_HASH),
+                Err(RepositoryError::NotFound)
+            ),
             "download should be removed when torrent is not found on client"
         );
     }
@@ -439,10 +443,16 @@ mod tests {
 
         let expected_dst = dst_dir.path().join("torrent-name");
         assert_eq!(dl.status, DownloadStatus::Imported);
-        assert_eq!(dl.imported_path.as_deref(), Some(expected_dst.to_str().unwrap()));
+        assert_eq!(
+            dl.imported_path.as_deref(),
+            Some(expected_dst.to_str().unwrap())
+        );
         assert!(expected_dst.join("movie.mkv").exists());
         assert_eq!(
-            app.repository.find_by_info_hash(&dl.info_hash).unwrap().status,
+            app.repository
+                .find_by_info_hash(&dl.info_hash)
+                .unwrap()
+                .status,
             DownloadStatus::Imported
         );
     }
@@ -464,7 +474,10 @@ mod tests {
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
         assert_eq!(
-            app.repository.find_by_info_hash(&dl.info_hash).unwrap().status,
+            app.repository
+                .find_by_info_hash(&dl.info_hash)
+                .unwrap()
+                .status,
             DownloadStatus::Failed
         );
     }
@@ -483,7 +496,13 @@ mod tests {
 
         copy_dir_recursive(src_dir.path(), dst_dir.path()).unwrap();
 
-        assert_eq!(std::fs::read(dst_dir.path().join("file.txt")).unwrap(), b"hello");
-        assert_eq!(std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(), b"world");
+        assert_eq!(
+            std::fs::read(dst_dir.path().join("file.txt")).unwrap(),
+            b"hello"
+        );
+        assert_eq!(
+            std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(),
+            b"world"
+        );
     }
 }

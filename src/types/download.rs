@@ -52,19 +52,17 @@ impl Download {
 mod tests {
     use super::*;
 
-
     #[test]
     fn download_new_sets_correct_initial_values() {
-        let uri: Magnet = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test".parse().unwrap();
+        let uri: Magnet = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test"
+            .parse()
+            .unwrap();
         let dl = Download::new(uri, "/downloads".to_owned());
 
         assert_eq!(dl.status, DownloadStatus::Queued);
         assert_eq!(dl.name, "test");
         assert_eq!(dl.target_dir, "/downloads");
-        assert_eq!(
-            dl.info_hash,
-            "ABCDEF1234567890ABCDEF1234567890ABCDEF12"
-        );
+        assert_eq!(dl.info_hash, "ABCDEF1234567890ABCDEF1234567890ABCDEF12");
         assert!(dl.imported_path.is_none());
         assert!(dl.error.is_none());
         assert_eq!(dl.created_at, dl.updated_at);

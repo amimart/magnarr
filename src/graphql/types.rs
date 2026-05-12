@@ -1,8 +1,8 @@
 use async_graphql::{Enum, Object};
 use chrono::{DateTime, Utc};
 
-use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 use crate::graphql::scalars::MagnetUri;
+use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum DownloadStatus {

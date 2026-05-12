@@ -23,7 +23,7 @@ impl FromStr for Magnet {
     type Err = MagnetParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let parsed = url::Url::parse(s).map_err(|e| MagnetParseError::InvalidUri(e))?;
+        let parsed = url::Url::parse(s).map_err(MagnetParseError::InvalidUri)?;
         if parsed.scheme() != "magnet" {
             return Err(MagnetParseError::InvalidScheme(parsed.scheme().to_owned()));
         }
@@ -48,7 +48,7 @@ impl FromStr for Magnet {
         }
 
         hash.ok_or_else(|| MagnetParseError::MissingInfoHash(s.to_owned()))
-            .map(|h| Magnet{
+            .map(|h| Magnet {
                 raw: s.to_owned(),
                 info_hash: h,
                 name,
@@ -68,7 +68,7 @@ impl Magnet {
 
     /// Return the name from the `dn=<name>` query parameter.
     pub fn name(&self) -> Option<&str> {
-        self.name.as_ref().map(String::as_str)
+        self.name.as_deref()
     }
 }
 
@@ -121,11 +121,22 @@ mod tests {
         ];
 
         for case in &cases {
-            let magnet: Magnet = case.input.parse().unwrap_or_else(|e| {
-                panic!("expected Ok for {:?}, got: {e}", case.input)
-            });
-            assert_eq!(magnet.info_hash(), case.info_hash, "info_hash mismatch for {:?}", case.input);
-            assert_eq!(magnet.name(), case.name, "name mismatch for {:?}", case.input);
+            let magnet: Magnet = case
+                .input
+                .parse()
+                .unwrap_or_else(|e| panic!("expected Ok for {:?}, got: {e}", case.input));
+            assert_eq!(
+                magnet.info_hash(),
+                case.info_hash,
+                "info_hash mismatch for {:?}",
+                case.input
+            );
+            assert_eq!(
+                magnet.name(),
+                case.name,
+                "name mismatch for {:?}",
+                case.input
+            );
         }
     }
 
@@ -148,7 +159,11 @@ mod tests {
 
         for case in &cases {
             let err = case.input.parse::<Magnet>().unwrap_err();
-            assert!((case.error)(&err), "unexpected error variant for {:?}: {err}", case.input);
+            assert!(
+                (case.error)(&err),
+                "unexpected error variant for {:?}: {err}",
+                case.input
+            );
         }
     }
 }

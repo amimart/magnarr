@@ -193,11 +193,7 @@ impl DownloadRepository for RedbStore {
                         .remove(old_key.as_str())
                         .map_err(|e| RepositoryError::Backend(e.to_string()))?;
                 }
-                let new_key = format!(
-                    "{}:{}",
-                    status_prefix(download.status),
-                    download.info_hash
-                );
+                let new_key = format!("{}:{}", status_prefix(download.status), download.info_hash);
                 status_idx
                     .insert(new_key.as_str(), download.info_hash.as_str())
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?;
@@ -251,12 +247,9 @@ impl DownloadRepository for RedbStore {
 mod tests {
     use super::*;
 
-    const MAGNET1: &str =
-        "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test1";
-    const MAGNET2: &str =
-        "magnet:?xt=urn:btih:FEDCBA0987654321FEDCBA0987654321FEDCBA09&dn=test2";
-    const MAGNET3: &str =
-        "magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=test3";
+    const MAGNET1: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test1";
+    const MAGNET2: &str = "magnet:?xt=urn:btih:FEDCBA0987654321FEDCBA0987654321FEDCBA09&dn=test2";
+    const MAGNET3: &str = "magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=test3";
 
     fn new_store() -> (RedbStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
