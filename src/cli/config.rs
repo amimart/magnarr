@@ -5,6 +5,9 @@ use thiserror::Error;
 
 use super::StartArgs;
 
+pub const DEFAULT_DOWNLOADS_PAGE_SIZE: usize = 50;
+pub const MAX_DOWNLOADS_PAGE_SIZE: usize = 100;
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Config {
     pub app: AppConfig,
@@ -43,6 +46,7 @@ pub enum TorrentClientConfig {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ServerConfig {
     pub listen_addr: String,
+    pub downloads_page_size: usize,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -103,6 +107,7 @@ struct FileAppConfig {
 #[derive(Debug, serde::Deserialize)]
 struct FileServerConfig {
     listen_addr: Option<String>,
+    downloads_page_size: Option<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -118,6 +123,7 @@ fn default_config() -> Config {
         },
         server: ServerConfig {
             listen_addr: "127.0.0.1:9393".to_owned(),
+            downloads_page_size: DEFAULT_DOWNLOADS_PAGE_SIZE,
         },
         store: StoreConfig {
             path: "./data/magnarr.redb".to_owned(),
@@ -156,6 +162,9 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
             if let Some(addr) = server.listen_addr {
                 cfg.server.listen_addr = addr;
             }
+            if let Some(limit) = server.downloads_page_size {
+                cfg.server.downloads_page_size = clamp_downloads_page_size(limit);
+            }
         }
         if let Some(store) = file_cfg.store {
             if let Some(path) = store.path {
@@ -180,6 +189,11 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     }
     if let Ok(addr) = std::env::var("MAGNARR_SERVER_LISTEN_ADDR") {
         cfg.server.listen_addr = addr;
+    }
+    if let Ok(limit) = std::env::var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE") {
+        if let Ok(limit) = limit.parse::<usize>() {
+            cfg.server.downloads_page_size = clamp_downloads_page_size(limit);
+        }
     }
     if let Ok(path) = std::env::var("MAGNARR_STORE_PATH") {
         cfg.store.path = path;
@@ -209,6 +223,10 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     Ok(cfg)
 }
 
+fn clamp_downloads_page_size(limit: usize) -> usize {
+    limit.clamp(1, MAX_DOWNLOADS_PAGE_SIZE)
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -232,9 +250,11 @@ mod tests {
     fn default_config_values_are_correct() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_STORE_PATH");
         let cfg = load_config(default_start_args()).unwrap();
         assert_eq!(cfg.server.listen_addr, "127.0.0.1:9393");
+        assert_eq!(cfg.server.downloads_page_size, DEFAULT_DOWNLOADS_PAGE_SIZE);
         assert_eq!(cfg.store.path, "./data/magnarr.redb");
     }
 
@@ -249,7 +269,7 @@ mod tests {
         let mut f = std::fs::File::create(&config_path).unwrap();
         writeln!(
             f,
-            "server:\n  listen_addr: 0.0.0.0:9090\nstore:\n  path: /tmp/test.redb"
+            "server:\n  listen_addr: 0.0.0.0:9090\n  downloads_page_size: 75\nstore:\n  path: /tmp/test.redb"
         )
         .unwrap();
 
@@ -260,12 +280,14 @@ mod tests {
         };
         let cfg = load_config(args).unwrap();
         assert_eq!(cfg.server.listen_addr, "0.0.0.0:9090");
+        assert_eq!(cfg.server.downloads_page_size, 75);
         assert_eq!(cfg.store.path, "/tmp/test.redb");
     }
 
     #[test]
     fn env_var_listen_addr_overrides_config_file() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_STORE_PATH");
 
         let dir = tempfile::tempdir().unwrap();
@@ -288,6 +310,7 @@ mod tests {
     fn env_var_store_path_overrides_config_file() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
 
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.yaml");
@@ -308,6 +331,7 @@ mod tests {
     #[test]
     fn cli_arg_overrides_everything() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_STORE_PATH");
 
         let dir = tempfile::tempdir().unwrap();
@@ -352,6 +376,7 @@ mod tests {
     #[test]
     fn default_torrent_client_is_qbittorrent_with_correct_defaults() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_QB_HOST");
         std::env::remove_var("MAGNARR_QB_USERNAME");
         std::env::remove_var("MAGNARR_QB_PASSWORD");
@@ -365,6 +390,7 @@ mod tests {
     #[test]
     fn default_app_poll_interval_is_30s() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
 
         let cfg = load_config(default_start_args()).unwrap();
@@ -374,6 +400,7 @@ mod tests {
     #[test]
     fn config_file_torrent_client_section_is_loaded() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_QB_HOST");
         std::env::remove_var("MAGNARR_QB_USERNAME");
         std::env::remove_var("MAGNARR_QB_PASSWORD");
@@ -402,6 +429,7 @@ mod tests {
     #[test]
     fn config_file_app_poll_interval_is_loaded() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
 
         let dir = tempfile::tempdir().unwrap();
@@ -421,6 +449,7 @@ mod tests {
     #[test]
     fn env_vars_override_qbittorrent_fields() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::set_var("MAGNARR_QB_HOST", "http://envhost:7777");
         std::env::remove_var("MAGNARR_QB_USERNAME");
         std::env::remove_var("MAGNARR_QB_PASSWORD");
@@ -435,11 +464,34 @@ mod tests {
     #[test]
     fn env_var_app_poll_interval_overrides_default() {
         let _guard = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
         std::env::set_var("MAGNARR_APP_POLL_INTERVAL", "5m");
 
         let cfg = load_config(default_start_args()).unwrap();
         std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
 
         assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(300));
+    }
+
+    #[test]
+    fn env_var_downloads_page_size_overrides_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE", "80");
+
+        let cfg = load_config(default_start_args()).unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
+
+        assert_eq!(cfg.server.downloads_page_size, 80);
+    }
+
+    #[test]
+    fn downloads_page_size_is_clamped_to_maximum() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE", "200");
+
+        let cfg = load_config(default_start_args()).unwrap();
+        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
+
+        assert_eq!(cfg.server.downloads_page_size, MAX_DOWNLOADS_PAGE_SIZE);
     }
 }
