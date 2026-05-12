@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::DownloadRepository;
+use crate::app::download::{DownloadRepository, RepositoryError};
 use crate::app::error::AppError;
 use crate::app::torrent::{TorrentClient};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
@@ -45,17 +45,19 @@ impl App {
         magnet: Magnet,
         target_dir: String,
     ) -> Result<Download, AppError> {
-        if self.repository.find_by_info_hash(magnet.info_hash())?.is_some() {
-            return Err(AppError::AlreadyExists);
-        }
+        match self.repository.find_by_info_hash(magnet.info_hash()) {
+            Ok(_) => Err(AppError::AlreadyExists),
+            Err(RepositoryError::NotFound) => { Ok(()) },
+            Err(e) => Err(e.into()),
+        }?;
 
         let mut download = Download::new(magnet, target_dir);
         self.repository.create_download(&download)?;
 
         if let Err(e) = self.torrent_client.download(&download.magnet).await {
-            if let Err(del_err) = self.repository.delete_download(download.id) {
+            if let Err(del_err) = self.repository.delete_download(&download.info_hash) {
                 tracing::error!(
-                    id = %download.id,
+                    info_hash = %download.info_hash,
                     "Failed to rollback download after torrent client error: {del_err}"
                 );
             }
@@ -127,12 +129,12 @@ impl App {
                         download.status = new_status;
                         download.touch();
                         if let Err(e) = self.repository.update_download(&download) {
-                            tracing::error!(id = %download.id, "Failed to update download status: {e}");
+                            tracing::error!(info_hash = %download.info_hash, "Failed to update download status: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(id = %download.id, "Failed to fetch torrent status: {e}");
+                    tracing::warn!(info_hash = %download.info_hash, "Failed to fetch torrent status: {e}");
                 }
             }
         }
@@ -171,7 +173,7 @@ impl App {
         let dir_name = match src.file_name() {
             Some(n) => n.to_owned(),
             None => {
-                tracing::error!(id = %download.id, "src path has no file name component: {}", src.display());
+                tracing::error!(info_hash = %download.info_hash, "src path has no file name component: {}", src.display());
                 download.status = DownloadStatus::Failed;
                 download.error = Some(format!("src path has no file name: {}", src.display()));
                 download.touch();
@@ -187,15 +189,15 @@ impl App {
                 let dst = std::path::Path::new(&download.target_dir).join(&dir_name);
                 download.status = DownloadStatus::Imported;
                 download.imported_path = Some(dst.to_string_lossy().into_owned());
-                tracing::info!(id = %download.id, "Download imported to {}", dst.display());
+                tracing::info!(info_hash = %download.info_hash, "Download imported to {}", dst.display());
             }
             Ok(Err(e)) => {
-                tracing::error!(id = %download.id, "Failed to copy torrent files: {e}");
+                tracing::error!(info_hash = %download.info_hash, "Failed to copy torrent files: {e}");
                 download.status = DownloadStatus::Failed;
                 download.error = Some(format!("Import failed: {e}"));
             }
             Err(e) => {
-                tracing::error!(id = %download.id, "Import task panicked: {e}");
+                tracing::error!(info_hash = %download.info_hash, "Import task panicked: {e}");
                 download.status = DownloadStatus::Failed;
                 download.error = Some(format!("Import task panicked: {e}"));
             }
@@ -203,7 +205,7 @@ impl App {
 
         download.touch();
         if let Err(e) = self.repository.update_download(download) {
-            tracing::error!(id = %download.id, "Failed to update download after import: {e}");
+            tracing::error!(info_hash = %download.info_hash, "Failed to update download after import: {e}");
         }
     }
 }
@@ -275,7 +277,7 @@ mod tests {
         assert_eq!(dl.status, DownloadStatus::Submitted);
         assert!(dl.updated_at >= dl.created_at);
 
-        let stored = app.repository.get_download(dl.id).unwrap();
+        let stored = app.repository.find_by_info_hash(&dl.info_hash).unwrap();
         assert_eq!(stored.status, DownloadStatus::Submitted);
     }
 
@@ -302,9 +304,9 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::TorrentClient(_))));
 
-        let stored = app.repository.find_by_info_hash(&hash).unwrap();
+        let res = app.repository.find_by_info_hash(&hash);
         assert!(
-            stored.is_none(),
+            res.is_ok(),
             "record should be rolled back on client failure"
         );
     }
@@ -367,7 +369,7 @@ mod tests {
         );
         assert!(expected_dst.join("movie.mkv").exists());
 
-        let persisted = store.get_download(dl.id).unwrap();
+        let persisted = store.find_by_info_hash(&dl.info_hash).unwrap();
         assert_eq!(persisted.status, DownloadStatus::Imported);
     }
 
@@ -387,7 +389,7 @@ mod tests {
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
 
-        let persisted = store.get_download(dl.id).unwrap();
+        let persisted = store.find_by_info_hash(&dl.info_hash).unwrap();
         assert_eq!(persisted.status, DownloadStatus::Failed);
     }
 }

@@ -14,9 +14,8 @@ pub enum DownloadStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Download {
-    pub id: uuid::Uuid,
-    pub magnet: Magnet,
     pub info_hash: String,
+    pub magnet: Magnet,
     pub status: DownloadStatus,
     pub target_dir: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -34,9 +33,8 @@ impl Download {
         let now = chrono::Utc::now();
         let info_hash = magnet.info_hash().to_owned();
         Self {
-            id: uuid::Uuid::new_v4(),
-            magnet,
             info_hash,
+            magnet,
             status: DownloadStatus::Queued,
             target_dir,
             created_at: now,
@@ -59,7 +57,6 @@ mod tests {
 
         assert_eq!(dl.status, DownloadStatus::Queued);
         assert_eq!(dl.target_dir, "/downloads");
-        assert_eq!(dl.id.get_version(), Some(uuid::Version::Random));
         assert_eq!(
             dl.info_hash,
             "ABCDEF1234567890ABCDEF1234567890ABCDEF12"
