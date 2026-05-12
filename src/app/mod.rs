@@ -9,7 +9,8 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::download::{
-    DownloadRepository, DownloadsPage, DownloadsPageCursor, RepositoryError, MAX_DOWNLOADS_PAGE_SIZE,
+    DownloadRepository, DownloadsPage, DownloadsPageCursor, RepositoryError,
+    MAX_DOWNLOADS_PAGE_SIZE,
 };
 use crate::app::error::AppError;
 use crate::app::torrent::{TorrentClient, TorrentClientError};
@@ -238,7 +239,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{DownloadsPage, DEFAULT_DOWNLOADS_PAGE_SIZE, RepositoryError};
+    use crate::app::download::{DownloadsPage, RepositoryError, DEFAULT_DOWNLOADS_PAGE_SIZE};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};

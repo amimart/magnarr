@@ -1,6 +1,8 @@
 use redb::{Database, ReadableTable, TableDefinition};
 
-use crate::app::download::{DownloadRepository, DownloadsPage, DownloadsPageCursor, RepositoryError};
+use crate::app::download::{
+    DownloadRepository, DownloadsPage, DownloadsPageCursor, RepositoryError,
+};
 use crate::types::{Download, DownloadStatus};
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
@@ -164,7 +166,9 @@ impl DownloadRepository for RedbStore {
                 Some(cursor) => idx
                     .range(created_at_index_key_after(cursor).as_str()..)
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?,
-                None => idx.iter().map_err(|e| RepositoryError::Backend(e.to_string()))?,
+                None => idx
+                    .iter()
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?,
             };
 
             iter.map(|entry| {
