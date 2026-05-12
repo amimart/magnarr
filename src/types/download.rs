@@ -16,6 +16,7 @@ pub enum DownloadStatus {
 pub struct Download {
     pub info_hash: String,
     pub magnet: Magnet,
+    pub name: String,
     pub status: DownloadStatus,
     pub target_dir: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -32,9 +33,11 @@ impl Download {
     pub fn new(magnet: Magnet, target_dir: String) -> Self {
         let now = chrono::Utc::now();
         let info_hash = magnet.info_hash().to_owned();
+        let name = magnet.name().unwrap_or("").to_owned();
         Self {
             info_hash,
             magnet,
+            name,
             status: DownloadStatus::Queued,
             target_dir,
             created_at: now,
@@ -56,6 +59,7 @@ mod tests {
         let dl = Download::new(uri, "/downloads".to_owned());
 
         assert_eq!(dl.status, DownloadStatus::Queued);
+        assert_eq!(dl.name, "test");
         assert_eq!(dl.target_dir, "/downloads");
         assert_eq!(
             dl.info_hash,
