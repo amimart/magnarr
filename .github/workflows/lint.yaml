@@ -67,3 +67,12 @@ jobs:
         with:
           file_or_dir: .
           config_file: .yamllint.yaml
+
+  lint-docker:
+    name: Lint (Dockerfile)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Lint Dockerfile
+        run: docker run --rm -i -v "$PWD:/workdir" -w /workdir hadolint/hadolint:v2.12.0-alpine hadolint Dockerfile

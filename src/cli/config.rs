@@ -30,7 +30,7 @@ pub struct AppConfig {
 /// ```yaml
 /// torrent_client:
 ///   kind: qbittorrent
-///   host: http://localhost:8080
+///   host: http://localhost:9393
 ///   username: admin
 ///   password: secret
 /// ```
@@ -61,7 +61,7 @@ pub struct QbittorrentConfig {
 }
 
 fn default_qb_host() -> String {
-    "http://localhost:8080".to_owned()
+    "http://localhost:9393".to_owned()
 }
 
 fn default_qb_username() -> String {
@@ -117,7 +117,7 @@ fn default_config() -> Config {
             download_dir: "./downloads".to_owned(),
         },
         server: ServerConfig {
-            listen_addr: "127.0.0.1:8080".to_owned(),
+            listen_addr: "127.0.0.1:9393".to_owned(),
         },
         store: StoreConfig {
             path: "./data/magnarr.redb".to_owned(),
@@ -234,7 +234,7 @@ mod tests {
         std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
         std::env::remove_var("MAGNARR_STORE_PATH");
         let cfg = load_config(default_start_args()).unwrap();
-        assert_eq!(cfg.server.listen_addr, "127.0.0.1:8080");
+        assert_eq!(cfg.server.listen_addr, "127.0.0.1:9393");
         assert_eq!(cfg.store.path, "./data/magnarr.redb");
     }
 
@@ -358,7 +358,7 @@ mod tests {
 
         let cfg = load_config(default_start_args()).unwrap();
         let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
-        assert_eq!(qb.host, "http://localhost:8080");
+        assert_eq!(qb.host, "http://localhost:9393");
         assert_eq!(qb.username, "admin");
     }
 

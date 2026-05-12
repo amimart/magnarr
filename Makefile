@@ -1,10 +1,13 @@
-.PHONY: lint lint-rust lint-rust-format lint-md lint-yaml build test audit check fix fix-rust fix-md schema help
+.PHONY: lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test audit check fix fix-rust fix-md schema help
 
 BOLD   := \033[1m
 RESET  := \033[0m
 CYAN   := \033[36m
 GREEN  := \033[32m
 YELLOW := \033[33m
+
+DOCKER_IMAGE ?= magnarr:local
+HADOLINT_IMAGE ?= hadolint/hadolint:v2.12.0-alpine
 
 help: ## Show available targets
 	@printf "$(BOLD)Available targets:$(RESET)\n"
@@ -30,11 +33,21 @@ lint-yaml: ## Lint YAML
 	@printf "$(CYAN)$(BOLD)📋 Linting YAML...$(RESET)\n"
 	yamllint .
 
-lint: lint-rust lint-rust-format lint-md lint-yaml ## Run all linters
+lint-docker: ## Lint Dockerfile
+	@printf "$(CYAN)$(BOLD)🐳 Linting Dockerfile...$(RESET)\n"
+	docker run --rm -i -v "$$(pwd):/workdir" -w /workdir $(HADOLINT_IMAGE) hadolint Dockerfile
 
-build: ## Build the project
+lint: lint-rust lint-rust-format lint-md lint-yaml lint-docker ## Run all linters
+
+build-rust: ## Build the magnarr binary
 	@printf "$(GREEN)$(BOLD)🔨 Building...$(RESET)\n"
 	cargo build
+
+build-docker: ## Build the Docker image
+	@printf "$(GREEN)$(BOLD)🐳 Building Docker image...$(RESET)\n"
+	docker build --tag $(DOCKER_IMAGE) .
+
+build: build-rust build-docker ## Build all
 
 test: ## Run tests
 	@printf "$(GREEN)$(BOLD)🧪 Running tests...$(RESET)\n"
@@ -44,7 +57,7 @@ audit: ## Run security audit
 	@printf "$(YELLOW)$(BOLD)🔒 Running security audit...$(RESET)\n"
 	cargo audit
 
-check: lint build test audit ## Run all checks (mirrors CI)
+check: lint build test audit ## Run all checks
 
 fix-rust: ## Auto-fix Rust formatting and clippy lints
 	@printf "$(CYAN)$(BOLD)🔧 Fixing Rust...$(RESET)\n"
