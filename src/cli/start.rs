@@ -41,7 +41,12 @@ pub async fn run(args: StartArgs) {
     };
 
     let token = CancellationToken::new();
-    let app = App::new(Arc::new(repo), torrent_client, cfg.app.poll_interval);
+    let app = App::new(
+        Arc::new(repo),
+        torrent_client,
+        cfg.app.poll_interval,
+        cfg.app.download_dir.into(),
+    );
     app.start(token.clone());
 
     let graphql = GraphqlServer::new(app.clone());

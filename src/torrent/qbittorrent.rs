@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
 use tokio::sync::Mutex;
 
-use crate::app::model::MagnetUri;
-use crate::app::torrent::{TorrentClient, TorrentClientError, TorrentState, TorrentStatus};
+use crate::app::torrent::{TorrentClient, TorrentClientError};
+use crate::types::{Magnet, TorrentState, TorrentStatus};
 
 #[derive(Debug, Clone)]
 pub struct QbittorrentConfig {
@@ -112,7 +112,7 @@ impl QbittorrentClient {
 
 #[async_trait]
 impl TorrentClient for QbittorrentClient {
-    async fn download(&self, magnet: &MagnetUri) -> Result<(), TorrentClientError> {
+    async fn download(&self, magnet: &Magnet) -> Result<(), TorrentClientError> {
         let url = format!("{}/api/v2/torrents/add", self.cfg.host);
         let magnet_str = magnet.as_str().to_owned();
         let http = self.http.clone();
@@ -173,13 +173,9 @@ impl TorrentClient for QbittorrentClient {
             .ok_or_else(|| TorrentClientError::NotFound(info_hash.to_owned()))?;
 
         Ok(TorrentStatus {
+            hash: t["hash"].as_str().unwrap_or("").to_owned(),
             state: parse_state(t["state"].as_str().unwrap_or("")),
-            progress: t["progress"].as_f64().unwrap_or(0.0) as f32,
-            eta: t["eta"].as_u64().filter(|&v| v < u32::MAX as u64),
-            download_speed: t["dlspeed"].as_u64().unwrap_or(0),
-            upload_speed: t["upspeed"].as_u64().unwrap_or(0),
-            peers: t["num_leechs"].as_u64().unwrap_or(0) as u32,
-            save_path: t["save_path"].as_str().unwrap_or("").to_owned(),
+            name: t["name"].as_str().unwrap_or("").to_owned(),
         })
     }
 }

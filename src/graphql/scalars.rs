@@ -1,6 +1,6 @@
 use async_graphql::{InputValueError, InputValueResult, Scalar, ScalarType, Value};
 
-use crate::app::model::MagnetUri as DomainMagnetUri;
+use crate::types::Magnet as DomainMagnetUri;
 
 /// GraphQL scalar for a magnet URI.
 /// Accepts any string that passes `MagnetUri`'s domain validation (valid URL, `magnet:` scheme).

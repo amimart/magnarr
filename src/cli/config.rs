@@ -19,6 +19,8 @@ pub struct AppConfig {
     /// Accepts humantime strings: "30s", "1m", "5 minutes", etc.
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
+    /// Directory where the torrent client saves completed downloads.
+    pub download_dir: String,
 }
 
 /// Discriminated union of supported torrent clients.
@@ -95,6 +97,7 @@ struct FileConfig {
 struct FileAppConfig {
     /// Humantime duration string: "30s", "1m", "5 minutes", etc.
     poll_interval: Option<String>,
+    download_dir: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -111,6 +114,7 @@ fn default_config() -> Config {
     Config {
         app: AppConfig {
             poll_interval: Duration::from_secs(30),
+            download_dir: "./downloads".to_owned(),
         },
         server: ServerConfig {
             listen_addr: "127.0.0.1:8080".to_owned(),
@@ -144,6 +148,9 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
                     cfg.app.poll_interval = d;
                 }
             }
+            if let Some(dir) = app.download_dir {
+                cfg.app.download_dir = dir;
+            }
         }
         if let Some(server) = file_cfg.server {
             if let Some(addr) = server.listen_addr {
@@ -167,6 +174,9 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
         if let Ok(d) = humantime::parse_duration(&s) {
             cfg.app.poll_interval = d;
         }
+    }
+    if let Ok(dir) = std::env::var("MAGNARR_APP_DOWNLOAD_DIR") {
+        cfg.app.download_dir = dir;
     }
     if let Ok(addr) = std::env::var("MAGNARR_SERVER_LISTEN_ADDR") {
         cfg.server.listen_addr = addr;

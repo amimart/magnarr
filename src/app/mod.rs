@@ -1,23 +1,25 @@
 pub mod download;
 pub mod error;
-pub mod model;
 pub mod torrent;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::DownloadRepository;
+use crate::app::download::{DownloadRepository, RepositoryError};
 use crate::app::error::AppError;
-use crate::app::model::{Download, DownloadStatus, MagnetUri};
-use crate::app::torrent::{TorrentClient, TorrentState};
+use crate::app::torrent::{TorrentClient, TorrentClientError};
+use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
 #[derive(Clone)]
 pub struct App {
     repository: Arc<dyn DownloadRepository>,
     torrent_client: Arc<dyn TorrentClient>,
     poll_interval: Duration,
+    /// Directory where the torrent client saves completed downloads.
+    download_dir: PathBuf,
 }
 
 impl App {
@@ -25,35 +27,33 @@ impl App {
         repository: Arc<dyn DownloadRepository>,
         torrent_client: Arc<dyn TorrentClient>,
         poll_interval: Duration,
+        download_dir: PathBuf,
     ) -> Self {
         Self {
             repository,
             torrent_client,
             poll_interval,
+            download_dir,
         }
     }
 
     /// Submits a new download: persists it as `Queued`, sends the magnet to the
     /// torrent client, then transitions to `Submitted`. If the client rejects the
     /// magnet the record is deleted (rollback) and an error is returned.
-    pub async fn download(
-        &self,
-        magnet_uri: MagnetUri,
-        target_dir: String,
-    ) -> Result<Download, AppError> {
-        if let Some(hash) = magnet_uri.info_hash() {
-            if self.repository.find_by_info_hash(hash)?.is_some() {
-                return Err(AppError::AlreadyExists);
-            }
-        }
+    pub async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
+        match self.repository.find_by_info_hash(magnet.info_hash()) {
+            Ok(_) => Err(AppError::AlreadyExists),
+            Err(RepositoryError::NotFound) => Ok(()),
+            Err(e) => Err(e.into()),
+        }?;
 
-        let mut download = Download::new(magnet_uri, target_dir);
+        let mut download = Download::new(magnet, target_dir);
         self.repository.create_download(&download)?;
 
-        if let Err(e) = self.torrent_client.download(&download.magnet_uri).await {
-            if let Err(del_err) = self.repository.delete_download(download.id) {
+        if let Err(e) = self.torrent_client.download(&download.magnet).await {
+            if let Err(del_err) = self.repository.delete_download(&download.info_hash) {
                 tracing::error!(
-                    id = %download.id,
+                    info_hash = %download.info_hash,
                     "Failed to rollback download after torrent client error: {del_err}"
                 );
             }
@@ -110,11 +110,7 @@ impl App {
         }
 
         for mut download in active {
-            let Some(ref info_hash) = download.info_hash else {
-                continue;
-            };
-
-            match self.torrent_client.status(info_hash).await {
+            match self.torrent_client.status(&download.info_hash).await {
                 Ok(ts) => {
                     let new_status = match ts.state {
                         TorrentState::Seeding => DownloadStatus::Importing,
@@ -126,15 +122,22 @@ impl App {
                     };
 
                     if new_status != download.status {
+                        download.name = ts.name;
                         download.status = new_status;
                         download.touch();
                         if let Err(e) = self.repository.update_download(&download) {
-                            tracing::error!(id = %download.id, "Failed to update download status: {e}");
+                            tracing::error!(info_hash = %download.info_hash, "Failed to update download status: {e}");
                         }
                     }
                 }
+                Err(TorrentClientError::NotFound(_)) => {
+                    tracing::warn!(info_hash = %download.info_hash, "Torrent not found, removing download");
+                    if let Err(e) = self.repository.delete_download(&download.info_hash) {
+                        tracing::error!(info_hash = %download.info_hash, "Failed to remove download: {e}");
+                    }
+                }
                 Err(e) => {
-                    tracing::warn!(id = %download.id, "Failed to fetch torrent status: {e}");
+                    tracing::warn!(info_hash = %download.info_hash, "Failed to fetch torrent status: {e}");
                 }
             }
         }
@@ -156,51 +159,43 @@ impl App {
             if token.is_cancelled() {
                 break;
             }
-            let Some(ref info_hash) = download.info_hash else {
-                continue;
-            };
-            match self.torrent_client.status(info_hash).await {
-                Ok(ts) if ts.state == TorrentState::Seeding => {
-                    self.import_download(&mut download, &ts.save_path).await;
-                }
-                _ => {} // Not seeding yet or error — retry next cycle.
-            }
+            self.import_download(&mut download).await;
         }
     }
 
     /// Copies the torrent save directory into `download.target_dir` and
     /// transitions the download to `Imported` or `Failed`.
     /// Assumes the download is already in `Importing` status.
-    async fn import_download(&self, download: &mut Download, save_path: &str) {
-        let src = std::path::PathBuf::from(save_path);
-
+    async fn import_download(&self, download: &mut Download) {
+        let src = self.download_dir.join(&download.name);
         let dir_name = match src.file_name() {
             Some(n) => n.to_owned(),
             None => {
-                tracing::error!(id = %download.id, "save_path has no file name component: {save_path}");
+                tracing::error!(info_hash = %download.info_hash, "src path has no file name component: {}", src.display());
                 download.status = DownloadStatus::Failed;
-                download.error = Some(format!("save_path has no file name: {save_path}"));
+                download.error = Some(format!("src path has no file name: {}", src.display()));
                 download.touch();
                 let _ = self.repository.update_download(download);
                 return;
             }
         };
-        let final_dst = std::path::PathBuf::from(&download.target_dir).join(&dir_name);
+        let src = src.to_owned();
+        let final_dst = PathBuf::from(&download.target_dir).join(&dir_name);
 
         match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &final_dst)).await {
             Ok(Ok(())) => {
                 let dst = std::path::Path::new(&download.target_dir).join(&dir_name);
                 download.status = DownloadStatus::Imported;
                 download.imported_path = Some(dst.to_string_lossy().into_owned());
-                tracing::info!(id = %download.id, "Download imported to {}", dst.display());
+                tracing::info!(info_hash = %download.info_hash, "Download imported to {}", dst.display());
             }
             Ok(Err(e)) => {
-                tracing::error!(id = %download.id, "Failed to copy torrent files: {e}");
+                tracing::error!(info_hash = %download.info_hash, "Failed to copy torrent files: {e}");
                 download.status = DownloadStatus::Failed;
                 download.error = Some(format!("Import failed: {e}"));
             }
             Err(e) => {
-                tracing::error!(id = %download.id, "Import task panicked: {e}");
+                tracing::error!(info_hash = %download.info_hash, "Import task panicked: {e}");
                 download.status = DownloadStatus::Failed;
                 download.error = Some(format!("Import task panicked: {e}"));
             }
@@ -208,7 +203,7 @@ impl App {
 
         download.touch();
         if let Err(e) = self.repository.update_download(download) {
-            tracing::error!(id = %download.id, "Failed to update download after import: {e}");
+            tracing::error!(info_hash = %download.info_hash, "Failed to update download after import: {e}");
         }
     }
 }
@@ -231,17 +226,21 @@ fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::torrent::{TorrentClientError, TorrentStatus};
+    use crate::app::download::RepositoryError;
+    use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
+    use crate::types::{TorrentState, TorrentStatus};
     use async_trait::async_trait;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
+    const INFO_HASH: &str = "ABCDEF1234567890ABCDEF1234567890ABCDEF12";
 
+    /// Succeeds on `download()`, returns `NotFound` on `status()`.
     struct OkTorrentClient;
 
     #[async_trait]
     impl TorrentClient for OkTorrentClient {
-        async fn download(&self, _magnet: &MagnetUri) -> Result<(), TorrentClientError> {
+        async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
             Ok(())
         }
         async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
@@ -249,11 +248,12 @@ mod tests {
         }
     }
 
+    /// Fails on `download()`.
     struct FailTorrentClient;
 
     #[async_trait]
     impl TorrentClient for FailTorrentClient {
-        async fn download(&self, _magnet: &MagnetUri) -> Result<(), TorrentClientError> {
+        async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
             Err(TorrentClientError::Api("simulated failure".to_owned()))
         }
         async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
@@ -261,37 +261,67 @@ mod tests {
         }
     }
 
+    /// Returns a fixed `TorrentStatus` on `status()`.
+    struct StatefulTorrentClient {
+        state: TorrentState,
+        name: &'static str,
+    }
+
+    #[async_trait]
+    impl TorrentClient for StatefulTorrentClient {
+        async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
+            Ok(())
+        }
+        async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
+            Ok(TorrentStatus {
+                hash: info_hash.to_owned(),
+                state: self.state.clone(),
+                name: self.name.to_owned(),
+            })
+        }
+    }
+
+    /// Creates an `App` backed by a real `RedbStore` in a temporary directory.
+    /// The returned `TempDir` must be kept alive for the duration of the test.
     fn new_app(client: Arc<dyn TorrentClient>) -> (App, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.redb");
-        let store = RedbStore::new(path.to_str().unwrap()).unwrap();
-        let app = App::new(Arc::new(store), client, Duration::from_secs(60));
+        let download_dir = dir.path().join("downloads");
+        std::fs::create_dir_all(&download_dir).unwrap();
+        let store = RedbStore::new(dir.path().join("test.redb").to_str().unwrap()).unwrap();
+        let app = App::new(
+            Arc::new(store),
+            client,
+            Duration::from_secs(60),
+            download_dir,
+        );
         (app, dir)
     }
+
+    // --- download() ---
 
     #[tokio::test]
     async fn download_happy_path_returns_submitted_download() {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
-        let magnet: MagnetUri = MAGNET.parse().unwrap();
+        let magnet: Magnet = MAGNET.parse().unwrap();
 
-        let dl = app.download(magnet, "/downloads".to_owned()).await.unwrap();
+        let dl = app.download(magnet, "/target".to_owned()).await.unwrap();
 
         assert_eq!(dl.status, DownloadStatus::Submitted);
         assert!(dl.updated_at >= dl.created_at);
 
-        let stored = app.repository.get_download(dl.id).unwrap();
+        let stored = app.repository.find_by_info_hash(&dl.info_hash).unwrap();
         assert_eq!(stored.status, DownloadStatus::Submitted);
     }
 
     #[tokio::test]
     async fn download_duplicate_info_hash_returns_already_exists() {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
-        let magnet: MagnetUri = MAGNET.parse().unwrap();
+        let magnet: Magnet = MAGNET.parse().unwrap();
 
-        app.download(magnet.clone(), "/downloads".to_owned())
+        app.download(magnet.clone(), "/target".to_owned())
             .await
             .unwrap();
-        let result = app.download(magnet, "/downloads".to_owned()).await;
+        let result = app.download(magnet, "/target".to_owned()).await;
 
         assert!(matches!(result, Err(AppError::AlreadyExists)));
     }
@@ -299,19 +329,160 @@ mod tests {
     #[tokio::test]
     async fn download_client_failure_rolls_back_record() {
         let (app, _dir) = new_app(Arc::new(FailTorrentClient));
-        let magnet: MagnetUri = MAGNET.parse().unwrap();
-        let hash = magnet.info_hash().unwrap().to_owned();
+        let magnet: Magnet = MAGNET.parse().unwrap();
+        let hash = magnet.info_hash().to_owned();
 
-        let result = app.download(magnet, "/downloads".to_owned()).await;
+        let result = app.download(magnet, "/target".to_owned()).await;
 
         assert!(matches!(result, Err(AppError::TorrentClient(_))));
-
-        let stored = app.repository.find_by_info_hash(&hash).unwrap();
         assert!(
-            stored.is_none(),
+            matches!(
+                app.repository.find_by_info_hash(&hash),
+                Err(RepositoryError::NotFound)
+            ),
             "record should be rolled back on client failure"
         );
     }
+
+    // --- poll_downloads() ---
+
+    #[tokio::test]
+    async fn poll_downloads_removes_download_when_torrent_not_found() {
+        let (app, _dir) = new_app(Arc::new(OkTorrentClient));
+        app.download(MAGNET.parse().unwrap(), "/target".to_owned())
+            .await
+            .unwrap();
+
+        let token = CancellationToken::new();
+        app.poll_downloads(&token).await;
+
+        assert!(
+            matches!(
+                app.repository.find_by_info_hash(INFO_HASH),
+                Err(RepositoryError::NotFound)
+            ),
+            "download should be removed when torrent is not found on client"
+        );
+    }
+
+    #[tokio::test]
+    async fn poll_downloads_transitions_to_importing_and_updates_name_on_seeding() {
+        let client = Arc::new(StatefulTorrentClient {
+            state: TorrentState::Seeding,
+            name: "resolved-name",
+        });
+        let (app, _dir) = new_app(client);
+        app.download(MAGNET.parse().unwrap(), "/target".to_owned())
+            .await
+            .unwrap();
+
+        let token = CancellationToken::new();
+        app.poll_downloads(&token).await;
+
+        let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
+        assert_eq!(dl.status, DownloadStatus::Importing);
+        assert_eq!(dl.name, "resolved-name");
+    }
+
+    #[tokio::test]
+    async fn poll_downloads_transitions_to_downloading_and_updates_name() {
+        let client = Arc::new(StatefulTorrentClient {
+            state: TorrentState::Downloading,
+            name: "resolved-name",
+        });
+        let (app, _dir) = new_app(client);
+        app.download(MAGNET.parse().unwrap(), "/target".to_owned())
+            .await
+            .unwrap();
+
+        let token = CancellationToken::new();
+        app.poll_downloads(&token).await;
+
+        let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
+        assert_eq!(dl.status, DownloadStatus::Downloading);
+        assert_eq!(dl.name, "resolved-name");
+    }
+
+    #[tokio::test]
+    async fn poll_downloads_transitions_to_failed_on_torrent_error() {
+        let client = Arc::new(StatefulTorrentClient {
+            state: TorrentState::Error,
+            name: "some-name",
+        });
+        let (app, _dir) = new_app(client);
+        app.download(MAGNET.parse().unwrap(), "/target".to_owned())
+            .await
+            .unwrap();
+
+        let token = CancellationToken::new();
+        app.poll_downloads(&token).await;
+
+        let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
+        assert_eq!(dl.status, DownloadStatus::Failed);
+    }
+
+    // --- import_download() ---
+
+    #[tokio::test]
+    async fn import_download_transitions_to_imported_on_success() {
+        let (app, _dir) = new_app(Arc::new(OkTorrentClient));
+        let dst_dir = tempfile::tempdir().unwrap();
+
+        // Seed source files at download_dir/torrent-name/
+        let src = app.download_dir.join("torrent-name");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("movie.mkv"), b"data").unwrap();
+
+        let magnet: Magnet = MAGNET.parse().unwrap();
+        let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
+        dl.name = "torrent-name".to_owned();
+        dl.status = DownloadStatus::Importing;
+        app.repository.create_download(&dl).unwrap();
+
+        app.import_download(&mut dl).await;
+
+        let expected_dst = dst_dir.path().join("torrent-name");
+        assert_eq!(dl.status, DownloadStatus::Imported);
+        assert_eq!(
+            dl.imported_path.as_deref(),
+            Some(expected_dst.to_str().unwrap())
+        );
+        assert!(expected_dst.join("movie.mkv").exists());
+        assert_eq!(
+            app.repository
+                .find_by_info_hash(&dl.info_hash)
+                .unwrap()
+                .status,
+            DownloadStatus::Imported
+        );
+    }
+
+    #[tokio::test]
+    async fn import_download_transitions_to_failed_when_source_missing() {
+        let (app, _dir) = new_app(Arc::new(OkTorrentClient));
+        let dst_dir = tempfile::tempdir().unwrap();
+
+        let magnet: Magnet = MAGNET.parse().unwrap();
+        let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
+        // No directory at download_dir/"does-not-exist".
+        dl.name = "does-not-exist".to_owned();
+        dl.status = DownloadStatus::Importing;
+        app.repository.create_download(&dl).unwrap();
+
+        app.import_download(&mut dl).await;
+
+        assert_eq!(dl.status, DownloadStatus::Failed);
+        assert!(dl.error.is_some());
+        assert_eq!(
+            app.repository
+                .find_by_info_hash(&dl.info_hash)
+                .unwrap()
+                .status,
+            DownloadStatus::Failed
+        );
+    }
+
+    // --- copy_dir_recursive() ---
 
     #[test]
     fn copy_dir_recursive_copies_nested_structure() {
@@ -333,64 +504,5 @@ mod tests {
             std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(),
             b"world"
         );
-    }
-
-    fn new_app_with_store(store: Arc<RedbStore>, client: Arc<dyn TorrentClient>) -> App {
-        App::new(
-            store as Arc<dyn DownloadRepository>,
-            client,
-            Duration::from_secs(60),
-        )
-    }
-
-    #[tokio::test]
-    async fn import_download_transitions_to_imported_on_success() {
-        let src_dir = tempfile::tempdir().unwrap();
-        let dst_dir = tempfile::tempdir().unwrap();
-        std::fs::write(src_dir.path().join("movie.mkv"), b"data").unwrap();
-
-        let db_dir = tempfile::tempdir().unwrap();
-        let store =
-            Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
-        let uri: MagnetUri = MAGNET.parse().unwrap();
-        let mut dl =
-            crate::app::model::Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
-        dl.status = DownloadStatus::Importing;
-        store.create_download(&dl).unwrap();
-
-        let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        app.import_download(&mut dl, src_dir.path().to_str().unwrap())
-            .await;
-
-        let expected_dst = dst_dir.path().join(src_dir.path().file_name().unwrap());
-        assert_eq!(dl.status, DownloadStatus::Imported);
-        assert_eq!(
-            dl.imported_path.as_deref(),
-            Some(expected_dst.to_str().unwrap())
-        );
-        assert!(expected_dst.join("movie.mkv").exists());
-
-        let persisted = store.get_download(dl.id).unwrap();
-        assert_eq!(persisted.status, DownloadStatus::Imported);
-    }
-
-    #[tokio::test]
-    async fn import_download_transitions_to_failed_on_copy_error() {
-        let db_dir = tempfile::tempdir().unwrap();
-        let store =
-            Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
-        let uri: MagnetUri = MAGNET.parse().unwrap();
-        let mut dl = crate::app::model::Download::new(uri, "/nonexistent/target".to_owned());
-        dl.status = DownloadStatus::Importing;
-        store.create_download(&dl).unwrap();
-
-        let app = new_app_with_store(store.clone(), Arc::new(OkTorrentClient));
-        app.import_download(&mut dl, "/nonexistent/source").await;
-
-        assert_eq!(dl.status, DownloadStatus::Failed);
-        assert!(dl.error.is_some());
-
-        let persisted = store.get_download(dl.id).unwrap();
-        assert_eq!(persisted.status, DownloadStatus::Failed);
     }
 }

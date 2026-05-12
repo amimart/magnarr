@@ -1,9 +1,8 @@
 use async_graphql::{Enum, Object};
 use chrono::{DateTime, Utc};
-use uuid::Uuid;
 
-use crate::app::model::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 use crate::graphql::scalars::MagnetUri;
+use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
 pub enum DownloadStatus {
@@ -40,12 +39,16 @@ impl From<DomainDownload> for Download {
 
 #[Object]
 impl Download {
-    async fn id(&self) -> Uuid {
-        self.0.id
+    async fn info_hash(&self) -> &str {
+        &self.0.info_hash
     }
 
-    async fn magnet_uri(&self) -> MagnetUri {
-        MagnetUri(self.0.magnet_uri.clone())
+    async fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    async fn magnet(&self) -> MagnetUri {
+        MagnetUri(self.0.magnet.clone())
     }
 
     async fn status(&self) -> DownloadStatus {
