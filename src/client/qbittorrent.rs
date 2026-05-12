@@ -1,6 +1,6 @@
-use std::sync::Arc;
 use async_trait::async_trait;
 use reqwest::Client;
+use std::sync::Arc;
 
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::client::http::{AuthenticatedClient, AuthenticatedClientError, LoginFn};
@@ -52,7 +52,8 @@ impl QbittorrentClient {
                         ("password", password.as_str()),
                     ])
                     .send()
-                    .await.map_err(AuthenticatedClientError::from)?;
+                    .await
+                    .map_err(AuthenticatedClientError::from)?;
 
                 AuthenticatedClient::ensure_authenticated(resp).map(|_| client)
             })
@@ -65,9 +66,11 @@ impl TorrentClient for QbittorrentClient {
     async fn download(&self, magnet: &Magnet) -> Result<(), TorrentClientError> {
         let url = format!("{}/api/v2/torrents/add", self.host);
 
-        let resp = self.http
+        let resp = self
+            .http
             .with_auth(async |client| {
-                client.post(&url)
+                client
+                    .post(&url)
                     .form(&[("urls", magnet.as_str())])
                     .send()
                     .await
@@ -77,32 +80,24 @@ impl TorrentClient for QbittorrentClient {
 
         match resp.status() {
             reqwest::StatusCode::OK => Ok(()),
-            s => Err(TorrentClientError::UnexpectedStatus(s))
+            s => Err(TorrentClientError::UnexpectedStatus(s)),
         }
     }
 
     async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
-        let url = format!(
-            "{}/api/v2/torrents/info?hashes={}",
-            self.host, info_hash
-        );
+        let url = format!("{}/api/v2/torrents/info?hashes={}", self.host, info_hash);
 
-        let resp = self.http
-            .with_auth(async |client| {
-                client.get(&url)
-                    .send()
-                    .await
-            })
+        let resp = self
+            .http
+            .with_auth(async |client| client.get(&url).send().await)
             .await?;
 
         if !resp.status().is_success() {
             return Err(TorrentClientError::UnexpectedStatus(resp.status()));
         }
 
-        let torrents: Vec<serde_json::Value> = resp
-            .json()
-            .await
-            .map_err(|e| TorrentClientError::ClientError(e))?;
+        let torrents: Vec<serde_json::Value> =
+            resp.json().await.map_err(TorrentClientError::ClientError)?;
 
         let t = torrents
             .into_iter()

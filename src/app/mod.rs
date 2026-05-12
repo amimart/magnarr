@@ -255,7 +255,9 @@ mod tests {
     #[async_trait]
     impl TorrentClient for FailTorrentClient {
         async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
-            Err(TorrentClientError::UnexpectedStatus(reqwest::StatusCode::INTERNAL_SERVER_ERROR))
+            Err(TorrentClientError::UnexpectedStatus(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            ))
         }
         async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
             Err(TorrentClientError::NotFound(info_hash.to_owned()))

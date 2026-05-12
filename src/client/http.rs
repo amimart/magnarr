@@ -1,7 +1,7 @@
+use reqwest::{Client, Error, Response, StatusCode};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use reqwest::{Client, Error, Response, StatusCode};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -20,7 +20,8 @@ pub struct AuthenticatedClient {
 }
 
 pub type LoginFn = dyn Fn(Client) -> LoginFuture + Send + Sync;
-pub type LoginFuture = Pin<Box<dyn Future<Output = Result<Client, AuthenticatedClientError>> + Send>>;
+pub type LoginFuture =
+    Pin<Box<dyn Future<Output = Result<Client, AuthenticatedClientError>> + Send>>;
 
 #[derive(Clone)]
 struct Session {
@@ -33,7 +34,10 @@ impl AuthenticatedClient {
         Self {
             login_fn,
             base_client,
-            session: RwLock::new(Session { id: 0, client: None }),
+            session: RwLock::new(Session {
+                id: 0,
+                client: None,
+            }),
         }
     }
 
@@ -85,13 +89,16 @@ impl AuthenticatedClient {
     }
 
     pub fn is_auth_error(resp: &Response) -> bool {
-        matches!(resp.status(), StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED)
+        matches!(
+            resp.status(),
+            StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED
+        )
     }
 
     pub fn ensure_authenticated(resp: Response) -> Result<Response, AuthenticatedClientError> {
         if Self::is_auth_error(&resp) {
             Err(AuthenticatedClientError::AuthFailed(resp.status()))
-        }else {
+        } else {
             Ok(resp)
         }
     }

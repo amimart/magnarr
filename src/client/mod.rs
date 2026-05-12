@@ -1,2 +1,2 @@
-pub mod qbittorrent;
 mod http;
+pub mod qbittorrent;
