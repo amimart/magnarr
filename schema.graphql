@@ -7,6 +7,7 @@ scalar DateTime
 
 type Download {
 	infoHash: String!
+	name: String!
 	magnetUri: MagnetUri!
 	status: DownloadStatus!
 	targetDir: String!

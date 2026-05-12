@@ -43,7 +43,11 @@ impl Download {
         &self.0.info_hash
     }
 
-    async fn magnet_uri(&self) -> MagnetUri {
+    async fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    async fn magnet(&self) -> MagnetUri {
         MagnetUri(self.0.magnet.clone())
     }
 
