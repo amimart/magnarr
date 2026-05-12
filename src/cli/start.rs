@@ -8,7 +8,7 @@ use crate::cli::config::TorrentClientConfig;
 use crate::cli::{load_config, StartArgs};
 use crate::graphql::GraphqlServer;
 use crate::store::redb::RedbStore;
-use crate::torrent::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
+use crate::client::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 
 pub async fn run(args: StartArgs) {
     let cfg = match load_config(args) {
