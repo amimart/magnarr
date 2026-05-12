@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::{DownloadRepository, RepositoryError};
+use crate::app::download::{
+    DownloadRepository, DownloadsPage, DownloadsPageCursor, RepositoryError, MAX_DOWNLOADS_PAGE_SIZE,
+};
 use crate::app::error::AppError;
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
@@ -20,6 +22,7 @@ pub struct App {
     poll_interval: Duration,
     /// Directory where the torrent client saves completed downloads.
     download_dir: PathBuf,
+    downloads_page_size: usize,
 }
 
 impl App {
@@ -28,12 +31,14 @@ impl App {
         torrent_client: Arc<dyn TorrentClient>,
         poll_interval: Duration,
         download_dir: PathBuf,
+        downloads_page_size: usize,
     ) -> Self {
         Self {
             repository,
             torrent_client,
             poll_interval,
             download_dir,
+            downloads_page_size,
         }
     }
 
@@ -66,6 +71,19 @@ impl App {
         self.repository.update_download(&download)?;
 
         Ok(download)
+    }
+
+    pub fn downloads_page(
+        &self,
+        after: Option<DownloadsPageCursor>,
+        limit: Option<usize>,
+    ) -> Result<DownloadsPage, AppError> {
+        let limit = limit
+            .unwrap_or(self.downloads_page_size)
+            .clamp(1, MAX_DOWNLOADS_PAGE_SIZE);
+        self.repository
+            .list_downloads_page(after.as_ref(), limit)
+            .map_err(AppError::from)
     }
 
     /// Spawns a background task that periodically syncs active download
@@ -220,11 +238,12 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::RepositoryError;
+    use crate::app::download::{DownloadsPage, DEFAULT_DOWNLOADS_PAGE_SIZE, RepositoryError};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
     use async_trait::async_trait;
+    use std::sync::Mutex;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
     const INFO_HASH: &str = "ABCDEF1234567890ABCDEF1234567890ABCDEF12";
@@ -282,6 +301,13 @@ mod tests {
     /// Creates an `App` backed by a real `RedbStore` in a temporary directory.
     /// The returned `TempDir` must be kept alive for the duration of the test.
     fn new_app(client: Arc<dyn TorrentClient>) -> (App, tempfile::TempDir) {
+        new_app_with_page_size(client, DEFAULT_DOWNLOADS_PAGE_SIZE)
+    }
+
+    fn new_app_with_page_size(
+        client: Arc<dyn TorrentClient>,
+        downloads_page_size: usize,
+    ) -> (App, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let download_dir = dir.path().join("downloads");
         std::fs::create_dir_all(&download_dir).unwrap();
@@ -291,8 +317,57 @@ mod tests {
             client,
             Duration::from_secs(60),
             download_dir,
+            downloads_page_size,
         );
         (app, dir)
+    }
+
+    struct PagingRepository {
+        page: DownloadsPage,
+        last_limit: Mutex<Option<usize>>,
+    }
+
+    impl PagingRepository {
+        fn new(page: DownloadsPage) -> Self {
+            Self {
+                page,
+                last_limit: Mutex::new(None),
+            }
+        }
+    }
+
+    impl DownloadRepository for PagingRepository {
+        fn create_download(&self, _download: &Download) -> Result<(), RepositoryError> {
+            unimplemented!()
+        }
+
+        fn find_by_info_hash(&self, _info_hash: &str) -> Result<Download, RepositoryError> {
+            unimplemented!()
+        }
+
+        fn list_downloads_page(
+            &self,
+            _after: Option<&DownloadsPageCursor>,
+            limit: usize,
+        ) -> Result<DownloadsPage, RepositoryError> {
+            *self.last_limit.lock().unwrap() = Some(limit);
+            Ok(self.page.clone())
+        }
+
+        fn list_downloads_by_status(
+            &self,
+            _status: DownloadStatus,
+        ) -> Result<Vec<Download>, RepositoryError> {
+            unimplemented!()
+        }
+
+        fn update_download(&self, _download: &Download) -> Result<(), RepositoryError> {
+            unimplemented!()
+        }
+
+        fn delete_download(&self, _info_hash: &str) -> Result<(), RepositoryError> {
+            unimplemented!()
+        }
     }
 
     // --- download() ---
@@ -339,6 +414,51 @@ mod tests {
                 Err(RepositoryError::NotFound)
             ),
             "record should be rolled back on client failure"
+        );
+    }
+
+    #[test]
+    fn downloads_page_uses_configured_default_limit() {
+        let repo = Arc::new(PagingRepository::new(DownloadsPage {
+            downloads: Vec::new(),
+            end_cursor: None,
+            has_next_page: false,
+        }));
+        let app = App::new(
+            repo.clone(),
+            Arc::new(OkTorrentClient),
+            Duration::from_secs(60),
+            PathBuf::from("/downloads"),
+            12,
+        );
+
+        let page = app.downloads_page(None, None).unwrap();
+
+        assert!(page.downloads.is_empty());
+        assert_eq!(*repo.last_limit.lock().unwrap(), Some(12));
+    }
+
+    #[test]
+    fn downloads_page_clamps_requested_limit_to_maximum() {
+        let repo = Arc::new(PagingRepository::new(DownloadsPage {
+            downloads: Vec::new(),
+            end_cursor: None,
+            has_next_page: false,
+        }));
+        let app = App::new(
+            repo.clone(),
+            Arc::new(OkTorrentClient),
+            Duration::from_secs(60),
+            PathBuf::from("/downloads"),
+            DEFAULT_DOWNLOADS_PAGE_SIZE,
+        );
+
+        app.downloads_page(None, Some(MAX_DOWNLOADS_PAGE_SIZE + 1))
+            .unwrap();
+
+        assert_eq!(
+            *repo.last_limit.lock().unwrap(),
+            Some(MAX_DOWNLOADS_PAGE_SIZE)
         );
     }
 

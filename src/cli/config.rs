@@ -3,10 +3,9 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use super::StartArgs;
+use crate::app::download::{DEFAULT_DOWNLOADS_PAGE_SIZE, MAX_DOWNLOADS_PAGE_SIZE};
 
-pub const DEFAULT_DOWNLOADS_PAGE_SIZE: usize = 50;
-pub const MAX_DOWNLOADS_PAGE_SIZE: usize = 100;
+use super::StartArgs;
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct Config {
