@@ -51,6 +51,7 @@ impl App {
         self.repository.create_download(&download)?;
 
         if let Err(e) = self.torrent_client.download(&download.magnet).await {
+            tracing::error!("Failed to submit torrent download: {e}");
             if let Err(del_err) = self.repository.delete_download(&download.info_hash) {
                 tracing::error!(
                     info_hash = %download.info_hash,
@@ -254,7 +255,9 @@ mod tests {
     #[async_trait]
     impl TorrentClient for FailTorrentClient {
         async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
-            Err(TorrentClientError::Api("simulated failure".to_owned()))
+            Err(TorrentClientError::UnexpectedStatus(
+                reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+            ))
         }
         async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
             Err(TorrentClientError::NotFound(info_hash.to_owned()))

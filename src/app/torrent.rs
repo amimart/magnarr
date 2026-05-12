@@ -1,16 +1,19 @@
 use async_trait::async_trait;
+use reqwest::StatusCode;
 use thiserror::Error;
 
 use crate::types::{Magnet, TorrentStatus};
 
 #[derive(Debug, Error)]
 pub enum TorrentClientError {
-    #[error("authentication failed")]
-    AuthFailed,
+    #[error("authentication failed: {0}")]
+    AuthFailed(StatusCode),
     #[error("torrent not found: {0}")]
     NotFound(String),
-    #[error("API error: {0}")]
-    Api(String),
+    #[error("Unexpected status code: {0}")]
+    UnexpectedStatus(StatusCode),
+    #[error(transparent)]
+    ClientError(#[from] reqwest::Error),
 }
 
 #[async_trait]
