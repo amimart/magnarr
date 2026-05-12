@@ -6,6 +6,8 @@ CYAN   := \033[36m
 GREEN  := \033[32m
 YELLOW := \033[33m
 
+HADOLINT_IMAGE ?= hadolint/hadolint:v2.12.0-alpine
+
 help: ## Show available targets
 	@printf "$(BOLD)Available targets:$(RESET)\n"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(CYAN)$(BOLD)%-12s$(RESET) %s\n", $$1, $$2}'
@@ -30,7 +32,11 @@ lint-yaml: ## Lint YAML
 	@printf "$(CYAN)$(BOLD)📋 Linting YAML...$(RESET)\n"
 	yamllint .
 
-lint: lint-rust lint-rust-format lint-md lint-yaml ## Run all linters
+lint-docker: ## Lint Dockerfile
+	@printf "$(CYAN)$(BOLD)🐳 Linting Dockerfile...$(RESET)\n"
+	docker run --rm -i -v "$$(pwd):/workdir" -w /workdir $(HADOLINT_IMAGE) hadolint Dockerfile
+
+lint: lint-rust lint-rust-format lint-md lint-yaml lint-docker ## Run all linters
 
 build: ## Build the project
 	@printf "$(GREEN)$(BOLD)🔨 Building...$(RESET)\n"
