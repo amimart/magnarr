@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use thiserror::Error;
 
-use crate::types::{MagnetUri, TorrentStatus};
+use crate::types::{Magnet, TorrentStatus};
 
 #[derive(Debug, Error)]
 pub enum TorrentClientError {
@@ -15,6 +15,6 @@ pub enum TorrentClientError {
 
 #[async_trait]
 pub trait TorrentClient: Send + Sync {
-    async fn download(&self, magnet: &MagnetUri) -> Result<(), TorrentClientError>;
+    async fn download(&self, magnet: &Magnet) -> Result<(), TorrentClientError>;
     async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError>;
 }

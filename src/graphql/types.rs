@@ -45,7 +45,7 @@ impl Download {
     }
 
     async fn magnet_uri(&self) -> MagnetUri {
-        MagnetUri(self.0.magnet_uri.clone())
+        MagnetUri(self.0.magnet.clone())
     }
 
     async fn status(&self) -> DownloadStatus {

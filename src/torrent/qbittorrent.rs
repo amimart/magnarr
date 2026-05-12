@@ -3,7 +3,7 @@ use reqwest::{Client, StatusCode};
 use tokio::sync::Mutex;
 
 use crate::app::torrent::{TorrentClient, TorrentClientError};
-use crate::types::{MagnetUri, TorrentState, TorrentStatus};
+use crate::types::{Magnet, TorrentState, TorrentStatus};
 
 #[derive(Debug, Clone)]
 pub struct QbittorrentConfig {
@@ -112,7 +112,7 @@ impl QbittorrentClient {
 
 #[async_trait]
 impl TorrentClient for QbittorrentClient {
-    async fn download(&self, magnet: &MagnetUri) -> Result<(), TorrentClientError> {
+    async fn download(&self, magnet: &Magnet) -> Result<(), TorrentClientError> {
         let url = format!("{}/api/v2/torrents/add", self.cfg.host);
         let magnet_str = magnet.as_str().to_owned();
         let http = self.http.clone();

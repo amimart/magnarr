@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use crate::app::download::DownloadRepository;
 use crate::app::error::AppError;
 use crate::app::torrent::{TorrentClient};
-use crate::types::{Download, DownloadStatus, MagnetUri, TorrentState};
+use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
 #[derive(Clone)]
 pub struct App {
@@ -42,19 +42,17 @@ impl App {
     /// magnet the record is deleted (rollback) and an error is returned.
     pub async fn download(
         &self,
-        magnet_uri: MagnetUri,
+        magnet: Magnet,
         target_dir: String,
     ) -> Result<Download, AppError> {
-        if let Some(hash) = magnet_uri.info_hash() {
-            if self.repository.find_by_info_hash(hash)?.is_some() {
-                return Err(AppError::AlreadyExists);
-            }
+        if self.repository.find_by_info_hash(magnet.info_hash())?.is_some() {
+            return Err(AppError::AlreadyExists);
         }
 
-        let mut download = Download::new(magnet_uri, target_dir);
+        let mut download = Download::new(magnet, target_dir);
         self.repository.create_download(&download)?;
 
-        if let Err(e) = self.torrent_client.download(&download.magnet_uri).await {
+        if let Err(e) = self.torrent_client.download(&download.magnet).await {
             if let Err(del_err) = self.repository.delete_download(download.id) {
                 tracing::error!(
                     id = %download.id,
@@ -114,11 +112,7 @@ impl App {
         }
 
         for mut download in active {
-            let Some(ref info_hash) = download.info_hash else {
-                continue;
-            };
-
-            match self.torrent_client.status(info_hash).await {
+            match self.torrent_client.status(&download.info_hash).await {
                 Ok(ts) => {
                     let new_status = match ts.state {
                         TorrentState::Seeding => DownloadStatus::Importing,
@@ -160,10 +154,7 @@ impl App {
             if token.is_cancelled() {
                 break;
             }
-            let Some(ref info_hash) = download.info_hash else {
-                continue;
-            };
-            match self.torrent_client.status(info_hash).await {
+            match self.torrent_client.status(&download.info_hash).await {
                 Ok(ts) if ts.state == TorrentState::Seeding => {
                     let src = self.download_dir.join(&ts.name);
                     self.import_download(&mut download, &src).await;
@@ -246,7 +237,7 @@ mod tests {
 
     #[async_trait]
     impl TorrentClient for OkTorrentClient {
-        async fn download(&self, _magnet: &MagnetUri) -> Result<(), TorrentClientError> {
+        async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
             Ok(())
         }
         async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
@@ -258,7 +249,7 @@ mod tests {
 
     #[async_trait]
     impl TorrentClient for FailTorrentClient {
-        async fn download(&self, _magnet: &MagnetUri) -> Result<(), TorrentClientError> {
+        async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
             Err(TorrentClientError::Api("simulated failure".to_owned()))
         }
         async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
@@ -277,7 +268,7 @@ mod tests {
     #[tokio::test]
     async fn download_happy_path_returns_submitted_download() {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
-        let magnet: MagnetUri = MAGNET.parse().unwrap();
+        let magnet: Magnet = MAGNET.parse().unwrap();
 
         let dl = app.download(magnet, "/downloads".to_owned()).await.unwrap();
 
@@ -291,7 +282,7 @@ mod tests {
     #[tokio::test]
     async fn download_duplicate_info_hash_returns_already_exists() {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
-        let magnet: MagnetUri = MAGNET.parse().unwrap();
+        let magnet: Magnet = MAGNET.parse().unwrap();
 
         app.download(magnet.clone(), "/downloads".to_owned())
             .await
@@ -304,8 +295,8 @@ mod tests {
     #[tokio::test]
     async fn download_client_failure_rolls_back_record() {
         let (app, _dir) = new_app(Arc::new(FailTorrentClient));
-        let magnet: MagnetUri = MAGNET.parse().unwrap();
-        let hash = magnet.info_hash().unwrap().to_owned();
+        let magnet: Magnet = MAGNET.parse().unwrap();
+        let hash = magnet.info_hash().to_owned();
 
         let result = app.download(magnet, "/downloads".to_owned()).await;
 
@@ -358,7 +349,7 @@ mod tests {
         let db_dir = tempfile::tempdir().unwrap();
         let store =
             Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
-        let uri: MagnetUri = MAGNET.parse().unwrap();
+        let uri: Magnet = MAGNET.parse().unwrap();
         let mut dl =
             Download::new(uri, dst_dir.path().to_str().unwrap().to_owned());
         dl.status = DownloadStatus::Importing;
@@ -385,7 +376,7 @@ mod tests {
         let db_dir = tempfile::tempdir().unwrap();
         let store =
             Arc::new(RedbStore::new(db_dir.path().join("test.redb").to_str().unwrap()).unwrap());
-        let uri: MagnetUri = MAGNET.parse().unwrap();
+        let uri: Magnet = MAGNET.parse().unwrap();
         let mut dl = Download::new(uri, "/nonexistent/target".to_owned());
         dl.status = DownloadStatus::Importing;
         store.create_download(&dl).unwrap();

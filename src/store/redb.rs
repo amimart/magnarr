@@ -81,15 +81,13 @@ impl DownloadRepository for RedbStore {
                 .insert(id_str.as_str(), json.as_str())
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
-            if let Some(ref hash) = download.info_hash {
-                let index_key = format!("infohash:{hash}");
-                let mut indexes = tx
-                    .open_table(INDEXES)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-                indexes
-                    .insert(index_key.as_str(), id_str.as_str())
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-            }
+            let index_key = format!("infohash:{}", download.info_hash);
+            let mut indexes = tx
+                .open_table(INDEXES)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            indexes
+                .insert(index_key.as_str(), id_str.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
             let status_key = format!("{}:{id_str}", status_prefix(download.status));
             let mut status_idx = tx
@@ -102,6 +100,23 @@ impl DownloadRepository for RedbStore {
         tx.commit()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         Ok(())
+    }
+
+    fn get_download(&self, id: uuid::Uuid) -> Result<Download, RepositoryError> {
+        let id_str = id.to_string();
+        let tx = self
+            .db
+            .begin_read()
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+        let table = tx
+            .open_table(DOWNLOADS)
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+        let entry = table
+            .get(id_str.as_str())
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?
+            .ok_or(RepositoryError::NotFound)?;
+        serde_json::from_str(entry.value())
+            .map_err(|e| RepositoryError::Serialization(e.to_string()))
     }
 
     fn find_by_info_hash(&self, info_hash: &str) -> Result<Option<Download>, RepositoryError> {
@@ -139,23 +154,6 @@ impl DownloadRepository for RedbStore {
             .map(Some)
     }
 
-    fn get_download(&self, id: uuid::Uuid) -> Result<Download, RepositoryError> {
-        let id_str = id.to_string();
-        let tx = self
-            .db
-            .begin_read()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-        let table = tx
-            .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-        let entry = table
-            .get(id_str.as_str())
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?
-            .ok_or(RepositoryError::NotFound)?;
-        serde_json::from_str(entry.value())
-            .map_err(|e| RepositoryError::Serialization(e.to_string()))
-    }
-
     fn list_downloads(&self) -> Result<Vec<Download>, RepositoryError> {
         let tx = self
             .db
@@ -176,6 +174,52 @@ impl DownloadRepository for RedbStore {
             downloads.push(dl);
         }
         Ok(downloads)
+    }
+
+    fn list_downloads_by_status(
+        &self,
+        status: DownloadStatus,
+    ) -> Result<Vec<Download>, RepositoryError> {
+        let prefix = status_prefix(status);
+        // `;` (0x3B) is the next ASCII char after `:` (0x3A); UUID chars are all below it.
+        let start = format!("{prefix}:");
+        let end = format!("{prefix};");
+
+        let tx = self
+            .db
+            .begin_read()
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+        let ids: Vec<String> = {
+            let idx = tx
+                .open_table(STATUS_INDEX)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            idx.range(start.as_str()..end.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                .map(|e| {
+                    e.map(|(_, v)| v.value().to_owned())
+                        .map_err(|err: redb::StorageError| {
+                            RepositoryError::Backend(err.to_string())
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+
+        let table = tx
+            .open_table(DOWNLOADS)
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+        let mut results = Vec::with_capacity(ids.len());
+        for id in &ids {
+            if let Some(entry) = table
+                .get(id.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+            {
+                let dl: Download = serde_json::from_str(entry.value())
+                    .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
+                results.push(dl);
+            }
+        }
+        Ok(results)
     }
 
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError> {
@@ -259,15 +303,13 @@ impl DownloadRepository for RedbStore {
                 .remove(id_str.as_str())
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
-            if let Some(ref hash) = download.info_hash {
-                let index_key = format!("infohash:{hash}");
-                let mut indexes = tx
-                    .open_table(INDEXES)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-                indexes
-                    .remove(index_key.as_str())
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-            }
+            let index_key = format!("infohash:{}", download.info_hash);
+            let mut indexes = tx
+                .open_table(INDEXES)
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            indexes
+                .remove(index_key.as_str())
+                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
             let status_key = format!("{}:{id_str}", status_prefix(download.status));
             let mut status_idx = tx
@@ -280,52 +322,6 @@ impl DownloadRepository for RedbStore {
         tx.commit()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
         Ok(())
-    }
-
-    fn list_downloads_by_status(
-        &self,
-        status: DownloadStatus,
-    ) -> Result<Vec<Download>, RepositoryError> {
-        let prefix = status_prefix(status);
-        // `;` (0x3B) is the next ASCII char after `:` (0x3A); UUID chars are all below it.
-        let start = format!("{prefix}:");
-        let end = format!("{prefix};");
-
-        let tx = self
-            .db
-            .begin_read()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-
-        let ids: Vec<String> = {
-            let idx = tx
-                .open_table(STATUS_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-            idx.range(start.as_str()..end.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                .map(|e| {
-                    e.map(|(_, v)| v.value().to_owned())
-                        .map_err(|err: redb::StorageError| {
-                            RepositoryError::Backend(err.to_string())
-                        })
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-
-        let table = tx
-            .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-        let mut results = Vec::with_capacity(ids.len());
-        for id in &ids {
-            if let Some(entry) = table
-                .get(id.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?
-            {
-                let dl: Download = serde_json::from_str(entry.value())
-                    .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
-                results.push(dl);
-            }
-        }
-        Ok(results)
     }
 }
 
@@ -354,7 +350,7 @@ mod tests {
         store.create_download(&dl).unwrap();
         let fetched = store.get_download(dl.id).unwrap();
         assert_eq!(fetched.id, dl.id);
-        assert_eq!(fetched.magnet_uri, dl.magnet_uri);
+        assert_eq!(fetched.magnet, dl.magnet);
         assert_eq!(fetched.status, dl.status);
     }
 
@@ -408,10 +404,9 @@ mod tests {
     fn find_by_info_hash_returns_download() {
         let (store, _dir) = new_store();
         let dl = test_download();
-        let hash = dl.info_hash.as_deref().unwrap().to_owned();
         store.create_download(&dl).unwrap();
 
-        let found = store.find_by_info_hash(&hash).unwrap();
+        let found = store.find_by_info_hash(&dl.info_hash).unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, dl.id);
     }
@@ -501,14 +496,12 @@ mod tests {
     fn delete_download_removes_infohash_index() {
         let (store, _dir) = new_store();
         let dl = test_download();
-        assert!(dl.info_hash.is_some(), "test download must have info_hash");
         store.create_download(&dl).unwrap();
         store.delete_download(dl.id).unwrap();
 
         let tx = store.db.begin_read().unwrap();
         let indexes = tx.open_table(INDEXES).unwrap();
-        let hash = dl.info_hash.as_deref().unwrap();
-        let key = format!("infohash:{hash}");
+        let key = format!("infohash:{}", dl.info_hash);
         assert!(indexes.get(key.as_str()).unwrap().is_none());
     }
 }
