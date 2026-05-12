@@ -126,6 +126,7 @@ impl App {
                     };
 
                     if new_status != download.status {
+                        download.name = ts.name;
                         download.status = new_status;
                         download.touch();
                         if let Err(e) = self.repository.update_download(&download) {
