@@ -1,10 +1,10 @@
 use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
-
-use crate::app::download::{DownloadCursor, SortOrder};
+use chrono::{DateTime, Utc};
+use crate::app::download::{DownloadCursor};
 use crate::graphql::scalars::MagnetUri;
-use crate::graphql::types::Download;
+use crate::graphql::types::{Download, DownloadStatus, SortOrder};
 use crate::graphql::GraphqlContext;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
@@ -21,8 +21,11 @@ impl QueryRoot {
     async fn downloads(
         &self,
         ctx: &Context<'_>,
+        status: Option<DownloadStatus>,
+        from: Option<DateTime<Utc>>,
         after: Option<String>,
         #[graphql(default = 50)] first: i32,
+        order: Option<SortOrder>,
     ) -> async_graphql::Result<Connection<String, Download, EmptyFields, EmptyFields>> {
         let ctx = ctx.data::<GraphqlContext>()?;
         let after = after.as_deref().map(decode_downloads_cursor).transpose()?;
@@ -35,22 +38,30 @@ impl QueryRoot {
             )));
         }
         let has_previous_page = after.is_some();
-        let mut iter =
-            ctx.app
-                .downloads(None, None, after.clone(), SortOrder::Desc)?;
-        let downloads = iter
-            .by_ref()
+
+        let iter = ctx.app.downloads(
+            status.map(Into::into),
+            from,
+            after,
+            order.unwrap_or(SortOrder::Desc).into(),
+        )?;
+
+        let mut edges = iter
             .take(limit + 1)
+            .map(|download| match download {
+                Ok(d) => {
+                    let cursor = encode_downloads_cursor(&DownloadCursor::from_download(&d));
+                    Ok(Edge::new(cursor, d.into()))
+                },
+                Err(e) => Err(e),
+            })
             .collect::<Result<Vec<_>, _>>()?;
-        let has_next_page = downloads.len() > limit;
+
+        let has_next_page = edges.len() > limit;
+        edges.truncate(limit);
 
         let mut connection = Connection::new(has_previous_page, has_next_page);
-        connection
-            .edges
-            .extend(downloads.into_iter().take(limit).map(|download| {
-                let cursor = encode_downloads_cursor(&DownloadCursor::from_download(&download));
-                Edge::new(cursor, download.into())
-            }));
+        connection.edges.extend(edges);
         Ok(connection)
     }
 }
@@ -106,7 +117,9 @@ mod tests {
     use super::*;
     use crate::app::error::AppError;
     use crate::app::service::DownloadService;
+    use crate::types::DownloadStatus as DomainDownloadStatus;
     use crate::types::{Download as DomainDownload, Magnet};
+    use crate::app::download::SortOrder as AppSortOrder;
     use async_graphql::Request;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
@@ -122,7 +135,7 @@ mod tests {
         status: Option<crate::types::DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
-        order: SortOrder,
+        order: AppSortOrder,
     }
 
     struct MockDownloadService {
@@ -145,7 +158,7 @@ mod tests {
             status: Option<crate::types::DownloadStatus>,
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
-            order: SortOrder,
+            order: AppSortOrder,
         ) -> Result<Box<dyn Iterator<Item = Result<DomainDownload, AppError>> + '_>, AppError>
         {
             *self.last_downloads_call.lock().unwrap() = Some(DownloadsCall {
@@ -161,7 +174,7 @@ mod tests {
                     .cmp(&right.created_at)
                     .then_with(|| left.info_hash.cmp(&right.info_hash))
             });
-            if matches!(order, SortOrder::Desc) {
+            if matches!(order, AppSortOrder::Desc) {
                 downloads.reverse();
             }
 
@@ -178,10 +191,10 @@ mod tests {
                         .map(|cursor| (cursor.created_at, cursor.info_hash.as_str()));
 
                     return match order {
-                        SortOrder::Asc => {
+                        AppSortOrder::Asc => {
                             key >= from_key && after_key.is_none_or(|after_key| key > after_key)
                         }
-                        SortOrder::Desc => {
+                        AppSortOrder::Desc => {
                             key <= from_key && after_key.is_none_or(|after_key| key < after_key)
                         }
                     };
@@ -189,11 +202,11 @@ mod tests {
 
                 match &after {
                     Some(after) => match order {
-                        SortOrder::Asc => {
+                        AppSortOrder::Asc => {
                             (download.created_at, download.info_hash.as_str())
                                 > (after.created_at, after.info_hash.as_str())
                         }
-                        SortOrder::Desc => {
+                        AppSortOrder::Desc => {
                             (download.created_at, download.info_hash.as_str())
                                 < (after.created_at, after.info_hash.as_str())
                         }
@@ -214,6 +227,11 @@ mod tests {
             let ts = Utc.timestamp_opt((index as i64 + 1) * 10, 0).unwrap();
             download.created_at = ts;
             download.updated_at = ts;
+            download.status = match index {
+                0 => DomainDownloadStatus::Queued,
+                1 => DomainDownloadStatus::Submitted,
+                _ => DomainDownloadStatus::Submitted,
+            };
             downloads.push(download);
         }
 
@@ -278,11 +296,61 @@ mod tests {
                 status: None,
                 from: None,
                 after: Some(DownloadCursor {
-                    status: crate::types::DownloadStatus::Queued,
+                    status: DomainDownloadStatus::Submitted,
                     created_at: Utc.timestamp_opt(20, 0).unwrap(),
-                    info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09".to_owned(),
+                    info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09"
+                        .to_owned(),
                 }),
-                order: SortOrder::Desc,
+                order: AppSortOrder::Desc,
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn downloads_query_forwards_filters_and_sorting() {
+        let service = new_mock_service();
+        let schema = build_test_schema(service.clone(), 100);
+
+        let response = schema
+            .execute(Request::new(
+                r#"{
+                    downloads(
+                        status: SUBMITTED
+                        from: "1970-01-01T00:00:20Z"
+                        order: ASC
+                        first: 5
+                    ) {
+                        edges { node { infoHash status } }
+                        pageInfo { hasNextPage }
+                    }
+                }"#,
+            ))
+            .await;
+
+        assert!(response.errors.is_empty(), "{:?}", response.errors);
+        let data = response.data.into_json().unwrap();
+        let edges = data["downloads"]["edges"].as_array().unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(
+            edges[0]["node"]["infoHash"].as_str().unwrap(),
+            "FEDCBA0987654321FEDCBA0987654321FEDCBA09"
+        );
+        assert_eq!(edges[0]["node"]["status"].as_str().unwrap(), "SUBMITTED");
+        assert_eq!(
+            edges[1]["node"]["infoHash"].as_str().unwrap(),
+            "1111111111111111111111111111111111111111"
+        );
+        assert_eq!(edges[1]["node"]["status"].as_str().unwrap(), "SUBMITTED");
+        assert!(!data["downloads"]["pageInfo"]["hasNextPage"]
+            .as_bool()
+            .unwrap());
+        assert_eq!(
+            *service.last_downloads_call.lock().unwrap(),
+            Some(DownloadsCall {
+                status: Some(DomainDownloadStatus::Submitted),
+                from: Some(Utc.timestamp_opt(20, 0).unwrap()),
+                after: None,
+                order: AppSortOrder::Asc,
             })
         );
     }
