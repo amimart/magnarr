@@ -12,20 +12,6 @@ pub enum DownloadListOrder {
     CreatedAtDesc,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DownloadListQuery {
-    pub status: Option<DownloadStatus>,
-    pub order: Option<DownloadListOrder>,
-    pub from_created_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub after_info_hash: Option<String>,
-}
-
-impl DownloadListQuery {
-    pub fn order(&self) -> DownloadListOrder {
-        self.order.unwrap_or_default()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct DownloadCursor {
     pub status: DownloadStatus,
@@ -55,15 +41,16 @@ pub enum RepositoryError {
     Serialization(String),
 }
 
-pub type DownloadIter<E> = Box<dyn Iterator<Item = Result<Download, E>> + Send>;
-
 pub trait DownloadRepository: Send + Sync {
     fn create_download(&self, download: &Download) -> Result<(), RepositoryError>;
     fn find_by_info_hash(&self, info_hash: &str) -> Result<Download, RepositoryError>;
     fn list_downloads(
         &self,
-        query: &DownloadListQuery,
-    ) -> Result<DownloadIter<RepositoryError>, RepositoryError>;
+        status: Option<DownloadStatus>,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<DownloadCursor>,
+        order: DownloadListOrder,
+    ) -> Result<impl Iterator<Item=Result<Download, RepositoryError>>, RepositoryError>;
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError>;
     fn delete_download(&self, info_hash: &str) -> Result<(), RepositoryError>;
 }
