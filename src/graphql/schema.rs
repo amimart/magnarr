@@ -203,4 +203,21 @@ mod tests {
             .as_bool()
             .unwrap());
     }
+
+    #[tokio::test]
+    async fn downloads_query_rejects_page_size_over_maximum() {
+        let (schema, _dir) = build_test_schema();
+
+        let response = schema
+            .execute(Request::new(
+                "{ downloads(first: 101) { edges { node { infoHash } } } }",
+            ))
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(
+            response.errors[0].message,
+            "`first` cannot be greater than 100"
+        );
+    }
 }

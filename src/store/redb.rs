@@ -200,7 +200,7 @@ impl DownloadRepository for RedbStore {
                 }),
             ),
             None => (
-                STATUS_CREATED_AT_INDEX,
+                CREATED_AT_INDEX,
                 after.map(|c| Bound::Excluded(created_at_index_key(c.created_at, &c.info_hash))),
             ),
         };
