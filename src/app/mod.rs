@@ -124,6 +124,7 @@ impl App {
 
                     if new_status != download.status {
                         download.name = ts.name;
+                        download.content_name = ts.content_name;
                         download.status = new_status;
                         download.touch();
                         if let Err(e) = self.repository.update_download(&download) {
@@ -168,27 +169,15 @@ impl App {
     /// transitions the download to `Imported` or `Failed`.
     /// Assumes the download is already in `Importing` status.
     async fn import_download(&self, download: &mut Download) {
-        let src = self.download_dir.join(&download.name);
-        let dir_name = match src.file_name() {
-            Some(n) => n.to_owned(),
-            None => {
-                tracing::error!(info_hash = %download.info_hash, "src path has no file name component: {}", src.display());
-                download.status = DownloadStatus::Failed;
-                download.error = Some(format!("src path has no file name: {}", src.display()));
-                download.touch();
-                let _ = self.repository.update_download(download);
-                return;
-            }
-        };
-        let src = src.to_owned();
-        let final_dst = PathBuf::from(&download.target_dir).join(&dir_name);
+        let src = self.download_dir.join(&download.content_name);
+        let dst = PathBuf::from(&download.target_dir).join(&download.content_name);
+        let import_path = dst.clone();
 
-        match tokio::task::spawn_blocking(move || copy_dir_recursive(&src, &final_dst)).await {
+        match tokio::task::spawn_blocking(move || copy_recursive(&src, &dst)).await {
             Ok(Ok(())) => {
-                let dst = std::path::Path::new(&download.target_dir).join(&dir_name);
                 download.status = DownloadStatus::Imported;
-                download.imported_path = Some(dst.to_string_lossy().into_owned());
-                tracing::info!(info_hash = %download.info_hash, "Download imported to {}", dst.display());
+                download.imported_path = Some(import_path.to_string_lossy().into_owned());
+                tracing::info!(info_hash = %download.info_hash, "Download imported to {}", import_path.display());
             }
             Ok(Err(e)) => {
                 tracing::error!(info_hash = %download.info_hash, "Failed to copy torrent files: {e}");
@@ -209,18 +198,22 @@ impl App {
     }
 }
 
-fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
+fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    if src.is_dir() {
+        std::fs::create_dir_all(dst)?;
+        for entry in std::fs::read_dir(src)? {
+            let entry = entry?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            copy_recursive(&src_path, &dst_path)?;
         }
+        return Ok(());
     }
+
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(src, dst)?;
     Ok(())
 }
 
@@ -268,6 +261,7 @@ mod tests {
     struct StatefulTorrentClient {
         state: TorrentState,
         name: &'static str,
+        content_name: &'static str,
     }
 
     #[async_trait]
@@ -280,6 +274,7 @@ mod tests {
                 hash: info_hash.to_owned(),
                 state: self.state.clone(),
                 name: self.name.to_owned(),
+                content_name: self.content_name.to_owned(),
             })
         }
     }
@@ -373,6 +368,7 @@ mod tests {
         let client = Arc::new(StatefulTorrentClient {
             state: TorrentState::Seeding,
             name: "resolved-name",
+            content_name: "resolved-name.mkv",
         });
         let (app, _dir) = new_app(client);
         app.download(MAGNET.parse().unwrap(), "/target".to_owned())
@@ -385,6 +381,7 @@ mod tests {
         let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Importing);
         assert_eq!(dl.name, "resolved-name");
+        assert_eq!(dl.content_name, "resolved-name.mkv");
     }
 
     #[tokio::test]
@@ -392,6 +389,7 @@ mod tests {
         let client = Arc::new(StatefulTorrentClient {
             state: TorrentState::Downloading,
             name: "resolved-name",
+            content_name: "resolved-name.mkv",
         });
         let (app, _dir) = new_app(client);
         app.download(MAGNET.parse().unwrap(), "/target".to_owned())
@@ -404,6 +402,7 @@ mod tests {
         let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Downloading);
         assert_eq!(dl.name, "resolved-name");
+        assert_eq!(dl.content_name, "resolved-name.mkv");
     }
 
     #[tokio::test]
@@ -411,6 +410,7 @@ mod tests {
         let client = Arc::new(StatefulTorrentClient {
             state: TorrentState::Error,
             name: "some-name",
+            content_name: "resolved-name.mkv",
         });
         let (app, _dir) = new_app(client);
         app.download(MAGNET.parse().unwrap(), "/target".to_owned())
@@ -439,6 +439,7 @@ mod tests {
         let magnet: Magnet = MAGNET.parse().unwrap();
         let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
         dl.name = "torrent-name".to_owned();
+        dl.content_name = "torrent-name".to_owned();
         dl.status = DownloadStatus::Importing;
         app.repository.create_download(&dl).unwrap();
 
@@ -461,6 +462,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn import_download_copies_single_file_to_file_destination() {
+        let (app, _dir) = new_app(Arc::new(OkTorrentClient));
+        let dst_dir = tempfile::tempdir().unwrap();
+
+        let src = app.download_dir.join("single-file.mkv");
+        std::fs::write(&src, b"video-data").unwrap();
+
+        let magnet: Magnet = MAGNET.parse().unwrap();
+        let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
+        dl.name = "single-file.mkv".to_owned();
+        dl.content_name = "single-file.mkv".to_owned();
+        dl.status = DownloadStatus::Importing;
+        app.repository.create_download(&dl).unwrap();
+
+        app.import_download(&mut dl).await;
+
+        let expected_dst = dst_dir.path().join("single-file.mkv");
+        assert_eq!(dl.status, DownloadStatus::Imported);
+        assert_eq!(
+            dl.imported_path.as_deref(),
+            Some(expected_dst.to_str().unwrap())
+        );
+        assert_eq!(std::fs::read(expected_dst).unwrap(), b"video-data");
+    }
+
+    #[tokio::test]
     async fn import_download_transitions_to_failed_when_source_missing() {
         let (app, _dir) = new_app(Arc::new(OkTorrentClient));
         let dst_dir = tempfile::tempdir().unwrap();
@@ -469,6 +496,7 @@ mod tests {
         let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
         // No directory at download_dir/"does-not-exist".
         dl.name = "does-not-exist".to_owned();
+        dl.content_name = "does-not-exist".to_owned();
         dl.status = DownloadStatus::Importing;
         app.repository.create_download(&dl).unwrap();
 
@@ -497,7 +525,7 @@ mod tests {
         std::fs::create_dir(&sub).unwrap();
         std::fs::write(sub.join("nested.txt"), b"world").unwrap();
 
-        copy_dir_recursive(src_dir.path(), dst_dir.path()).unwrap();
+        copy_recursive(src_dir.path(), dst_dir.path()).unwrap();
 
         assert_eq!(
             std::fs::read(dst_dir.path().join("file.txt")).unwrap(),
@@ -507,5 +535,19 @@ mod tests {
             std::fs::read(dst_dir.path().join("sub/nested.txt")).unwrap(),
             b"world"
         );
+    }
+
+    #[test]
+    fn copy_dir_recursive_copies_file_to_file_destination() {
+        let src_dir = tempfile::tempdir().unwrap();
+        let dst_dir = tempfile::tempdir().unwrap();
+
+        let src_file = src_dir.path().join("file.txt");
+        let dst_file = dst_dir.path().join("nested/file.txt");
+        std::fs::write(&src_file, b"hello").unwrap();
+
+        copy_recursive(&src_file, &dst_file).unwrap();
+
+        assert_eq!(std::fs::read(dst_file).unwrap(), b"hello");
     }
 }

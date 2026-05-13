@@ -15,4 +15,6 @@ pub struct TorrentStatus {
     pub state: TorrentState,
     /// Torrent name.
     pub name: String,
+    /// Torrent filename or root folder name.
+    pub content_name: String,
 }

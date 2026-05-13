@@ -16,7 +16,10 @@ pub enum DownloadStatus {
 pub struct Download {
     pub info_hash: String,
     pub magnet: Magnet,
+    /// The torrent name
     pub name: String,
+    /// The torrent filename or root folder name
+    pub content_name: String,
     pub status: DownloadStatus,
     pub target_dir: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -38,6 +41,7 @@ impl Download {
             info_hash,
             magnet,
             name,
+            content_name: "".to_owned(),
             status: DownloadStatus::Queued,
             target_dir,
             created_at: now,

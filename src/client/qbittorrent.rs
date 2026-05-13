@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 use reqwest::Client;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::app::torrent::{TorrentClient, TorrentClientError};
@@ -108,6 +109,11 @@ impl TorrentClient for QbittorrentClient {
             hash: t["hash"].as_str().unwrap_or("").to_owned(),
             state: parse_state(t["state"].as_str().unwrap_or("")),
             name: t["name"].as_str().unwrap_or("").to_owned(),
+            content_name: t["content_path"]
+                .as_str()
+                .map(PathBuf::from)
+                .and_then(|p| p.file_name().and_then(|f| f.to_str()).map(&str::to_owned))
+                .unwrap_or("".to_string()),
         })
     }
 }
