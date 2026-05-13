@@ -17,10 +17,17 @@ pub struct GraphqlServer {
     schema: AppSchema,
 }
 
+pub struct GraphqlContext {
+    pub app: Arc<dyn DownloadService>,
+    pub max_page_size: usize,
+}
+
 impl GraphqlServer {
-    pub fn new(app: Arc<dyn DownloadService>) -> Self {
+    pub fn new(app: Arc<dyn DownloadService>, max_page_size: usize) -> Self {
         Self {
-            schema: build_schema(app),
+            schema: build_schema(GraphqlContext {
+                app, max_page_size,
+            }),
         }
     }
 

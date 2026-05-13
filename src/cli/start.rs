@@ -49,7 +49,7 @@ pub async fn run(args: StartArgs) {
     );
     app.start(token.clone());
 
-    let graphql = GraphqlServer::new(Arc::new(app));
+    let graphql = GraphqlServer::new(Arc::new(app), cfg.server.max_page_size);
     let router = graphql.axum_router();
 
     let listener = match TcpListener::bind(&cfg.server.listen_addr).await {

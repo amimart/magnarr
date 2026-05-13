@@ -2,9 +2,6 @@ use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
 
-pub const DEFAULT_DOWNLOADS_PAGE_SIZE: usize = 50;
-pub const MAX_DOWNLOADS_PAGE_SIZE: usize = 100;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DownloadListOrder {
     CreatedAtAsc,

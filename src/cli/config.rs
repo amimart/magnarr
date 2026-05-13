@@ -3,8 +3,6 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::app::download::{DEFAULT_DOWNLOADS_PAGE_SIZE, MAX_DOWNLOADS_PAGE_SIZE};
-
 use super::StartArgs;
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -45,7 +43,7 @@ pub enum TorrentClientConfig {
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ServerConfig {
     pub listen_addr: String,
-    pub downloads_page_size: usize,
+    pub max_page_size: usize,
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -106,7 +104,7 @@ struct FileAppConfig {
 #[derive(Debug, serde::Deserialize)]
 struct FileServerConfig {
     listen_addr: Option<String>,
-    downloads_page_size: Option<usize>,
+    max_page_size: Option<usize>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -122,7 +120,7 @@ fn default_config() -> Config {
         },
         server: ServerConfig {
             listen_addr: "127.0.0.1:9393".to_owned(),
-            downloads_page_size: DEFAULT_DOWNLOADS_PAGE_SIZE,
+            max_page_size: 100,
         },
         store: StoreConfig {
             path: "./data/magnarr.redb".to_owned(),
@@ -161,8 +159,8 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
             if let Some(addr) = server.listen_addr {
                 cfg.server.listen_addr = addr;
             }
-            if let Some(limit) = server.downloads_page_size {
-                cfg.server.downloads_page_size = clamp_downloads_page_size(limit);
+            if let Some(limit) = server.max_page_size {
+                cfg.server.max_page_size = limit;
             }
         }
         if let Some(store) = file_cfg.store {
@@ -191,7 +189,7 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     }
     if let Ok(limit) = std::env::var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE") {
         if let Ok(limit) = limit.parse::<usize>() {
-            cfg.server.downloads_page_size = clamp_downloads_page_size(limit);
+            cfg.server.max_page_size = limit;
         }
     }
     if let Ok(path) = std::env::var("MAGNARR_STORE_PATH") {
@@ -222,10 +220,6 @@ pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
     Ok(cfg)
 }
 
-fn clamp_downloads_page_size(limit: usize) -> usize {
-    limit.clamp(1, MAX_DOWNLOADS_PAGE_SIZE)
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::Write;
@@ -253,7 +247,7 @@ mod tests {
         std::env::remove_var("MAGNARR_STORE_PATH");
         let cfg = load_config(default_start_args()).unwrap();
         assert_eq!(cfg.server.listen_addr, "127.0.0.1:9393");
-        assert_eq!(cfg.server.downloads_page_size, DEFAULT_DOWNLOADS_PAGE_SIZE);
+        assert_eq!(cfg.server.max_page_size, 100);
         assert_eq!(cfg.store.path, "./data/magnarr.redb");
     }
 
@@ -268,7 +262,7 @@ mod tests {
         let mut f = std::fs::File::create(&config_path).unwrap();
         writeln!(
             f,
-            "server:\n  listen_addr: 0.0.0.0:9090\n  downloads_page_size: 75\nstore:\n  path: /tmp/test.redb"
+            "server:\n  listen_addr: 0.0.0.0:9090\n  max_page_size: 75\nstore:\n  path: /tmp/test.redb"
         )
         .unwrap();
 
@@ -279,7 +273,7 @@ mod tests {
         };
         let cfg = load_config(args).unwrap();
         assert_eq!(cfg.server.listen_addr, "0.0.0.0:9090");
-        assert_eq!(cfg.server.downloads_page_size, 75);
+        assert_eq!(cfg.server.max_page_size, 75);
         assert_eq!(cfg.store.path, "/tmp/test.redb");
     }
 
@@ -473,24 +467,13 @@ mod tests {
     }
 
     #[test]
-    fn env_var_downloads_page_size_overrides_default() {
+    fn env_var_max_page_size_overrides_default() {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE", "80");
 
         let cfg = load_config(default_start_args()).unwrap();
         std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
 
-        assert_eq!(cfg.server.downloads_page_size, 80);
-    }
-
-    #[test]
-    fn downloads_page_size_is_clamped_to_maximum() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE", "200");
-
-        let cfg = load_config(default_start_args()).unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-
-        assert_eq!(cfg.server.downloads_page_size, MAX_DOWNLOADS_PAGE_SIZE);
+        assert_eq!(cfg.server.max_page_size, 80);
     }
 }

@@ -1,11 +1,9 @@
-use std::sync::Arc;
 use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 
-use crate::app::download::{DownloadCursor, DownloadListOrder, MAX_DOWNLOADS_PAGE_SIZE};
-use crate::app::App;
-use crate::app::service::DownloadService;
+use crate::app::download::{DownloadCursor, DownloadListOrder};
+use crate::graphql::GraphqlContext;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
 
@@ -26,17 +24,17 @@ impl QueryRoot {
         after: Option<String>,
         #[graphql(default = 50)] first: i32,
     ) -> async_graphql::Result<Connection<String, Download, EmptyFields, EmptyFields>> {
-        let app = ctx.data::<Arc<dyn DownloadService>>()?;
+        let ctx = ctx.data::<GraphqlContext>()?;
         let after = after.as_deref().map(decode_downloads_cursor).transpose()?;
         let limit = usize::try_from(first).map_err(|_| Error::new("`first` must be non-negative"))?;
-        if limit > MAX_DOWNLOADS_PAGE_SIZE {
+        if limit > ctx.max_page_size {
             return Err(Error::new(format!(
-                "`first` cannot be greater than {MAX_DOWNLOADS_PAGE_SIZE}"
+                "`first` cannot be greater than {}", ctx.max_page_size
             )));
         }
         let has_previous_page = after.is_some();
         let mut iter =
-            app.downloads(None, None, after.clone(), DownloadListOrder::CreatedAtDesc)?;
+            ctx.app.downloads(None, None, after.clone(), DownloadListOrder::CreatedAtDesc)?;
         let downloads = iter
             .by_ref()
             .take(limit + 1)
@@ -66,15 +64,15 @@ impl MutationRoot {
         magnet: MagnetUri,
         target_dir: String,
     ) -> async_graphql::Result<Download> {
-        let app = ctx.data::<Arc<dyn DownloadService>>()?;
-        let dl = app.download(magnet.0, target_dir).await?;
+        let ctx = ctx.data::<GraphqlContext>()?;
+        let dl = ctx.app.download(magnet.0, target_dir).await?;
         Ok(dl.into())
     }
 }
 
-pub fn build_schema(app: Arc<dyn DownloadService>) -> AppSchema {
+pub fn build_schema(ctx: GraphqlContext) -> AppSchema {
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
-        .data(app)
+        .data(ctx)
         .finish()
 }
 
@@ -105,7 +103,7 @@ mod tests {
     use async_graphql::Request;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
-
+    use crate::app::App;
     use super::*;
     use crate::app::download::DownloadRepository;
     use crate::app::torrent::{TorrentClient, TorrentClientError};
@@ -151,7 +149,7 @@ mod tests {
             dir.path().join("downloads"),
         );
 
-        (build_schema(Arc::new(app)), dir)
+        (build_schema(GraphqlContext{app: Arc::new(app), max_page_size: 100}), dir)
     }
 
     #[tokio::test]
