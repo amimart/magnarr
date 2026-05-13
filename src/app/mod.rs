@@ -180,7 +180,7 @@ where
     }
 
     async fn import_downloads(&self, token: &CancellationToken) {
-        let importing = match self.repository.list(Some(DownloadStatus::Downloading), None, None, SortOrder::Asc).and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>()) {
+        let importing = match self.repository.list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc).and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>()) {
             Ok(downloads) => downloads,
             Err(e) => {
                 tracing::error!("Failed to get importing downloads: {e}");
