@@ -124,6 +124,7 @@ impl App {
 
                     if new_status != download.status {
                         download.name = ts.name;
+                        download.content_name = ts.content_name;
                         download.status = new_status;
                         download.touch();
                         if let Err(e) = self.repository.update_download(&download) {
@@ -168,8 +169,8 @@ impl App {
     /// transitions the download to `Imported` or `Failed`.
     /// Assumes the download is already in `Importing` status.
     async fn import_download(&self, download: &mut Download) {
-        let src = self.download_dir.join(&download.name);
-        let dst = PathBuf::from(&download.target_dir).join(&download.name);
+        let src = self.download_dir.join(&download.content_name);
+        let dst = PathBuf::from(&download.target_dir).join(&download.content_name);
         let import_path = dst.clone();
 
         match tokio::task::spawn_blocking(move || copy_recursive(&src, &dst)).await {
@@ -260,6 +261,7 @@ mod tests {
     struct StatefulTorrentClient {
         state: TorrentState,
         name: &'static str,
+        content_name: &'static str,
     }
 
     #[async_trait]
@@ -272,6 +274,7 @@ mod tests {
                 hash: info_hash.to_owned(),
                 state: self.state.clone(),
                 name: self.name.to_owned(),
+                content_name: self.content_name.to_owned(),
             })
         }
     }
@@ -365,6 +368,7 @@ mod tests {
         let client = Arc::new(StatefulTorrentClient {
             state: TorrentState::Seeding,
             name: "resolved-name",
+            content_name: "resolved-name.mkv",
         });
         let (app, _dir) = new_app(client);
         app.download(MAGNET.parse().unwrap(), "/target".to_owned())
@@ -377,6 +381,7 @@ mod tests {
         let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Importing);
         assert_eq!(dl.name, "resolved-name");
+        assert_eq!(dl.content_name, "resolved-name.mkv");
     }
 
     #[tokio::test]
@@ -384,6 +389,7 @@ mod tests {
         let client = Arc::new(StatefulTorrentClient {
             state: TorrentState::Downloading,
             name: "resolved-name",
+            content_name: "resolved-name.mkv",
         });
         let (app, _dir) = new_app(client);
         app.download(MAGNET.parse().unwrap(), "/target".to_owned())
@@ -396,6 +402,7 @@ mod tests {
         let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Downloading);
         assert_eq!(dl.name, "resolved-name");
+        assert_eq!(dl.content_name, "resolved-name.mkv");
     }
 
     #[tokio::test]
@@ -403,6 +410,7 @@ mod tests {
         let client = Arc::new(StatefulTorrentClient {
             state: TorrentState::Error,
             name: "some-name",
+            content_name: "resolved-name.mkv",
         });
         let (app, _dir) = new_app(client);
         app.download(MAGNET.parse().unwrap(), "/target".to_owned())
