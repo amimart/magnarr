@@ -112,11 +112,7 @@ impl TorrentClient for QbittorrentClient {
             content_name: t["content_path"]
                 .as_str()
                 .map(PathBuf::from)
-                .and_then(|p| {
-                    p.file_name()
-                        .and_then(|f| f.to_str())
-                        .map(&str::to_owned)
-                })
+                .and_then(|p| p.file_name().and_then(|f| f.to_str()).map(&str::to_owned))
                 .unwrap_or("".to_string()),
         })
     }
