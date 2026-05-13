@@ -46,11 +46,10 @@ pub async fn run(args: StartArgs) {
         torrent_client,
         cfg.app.poll_interval,
         cfg.app.download_dir.into(),
-        cfg.server.downloads_page_size,
     );
     app.start(token.clone());
 
-    let graphql = GraphqlServer::new(app.clone());
+    let graphql = GraphqlServer::new(Arc::new(app));
     let router = graphql.axum_router();
 
     let listener = match TcpListener::bind(&cfg.server.listen_addr).await {

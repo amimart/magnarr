@@ -1,11 +1,11 @@
+use std::sync::Arc;
 use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 
-use crate::app::download::{
-    DownloadCursor, DownloadListOrder, DownloadListQuery, MAX_DOWNLOADS_PAGE_SIZE,
-};
+use crate::app::download::{DownloadCursor, DownloadListOrder, MAX_DOWNLOADS_PAGE_SIZE};
 use crate::app::App;
+use crate::app::service::DownloadService;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
 
@@ -24,25 +24,19 @@ impl QueryRoot {
         &self,
         ctx: &Context<'_>,
         after: Option<String>,
-        first: Option<i32>,
+        #[graphql(default = 50)] first: i32,
     ) -> async_graphql::Result<Connection<String, Download, EmptyFields, EmptyFields>> {
-        let app = ctx.data::<App>()?;
+        let app = ctx.data::<Arc<dyn DownloadService>>()?;
         let after = after.as_deref().map(decode_downloads_cursor).transpose()?;
-        let first = first
-            .map(|limit| {
-                usize::try_from(limit).map_err(|_| Error::new("`first` must be non-negative"))
-            })
-            .transpose()?;
-        let limit = first
-            .unwrap_or(app.downloads_page_size())
-            .clamp(1, MAX_DOWNLOADS_PAGE_SIZE);
+        let limit = usize::try_from(first).map_err(|_| Error::new("`first` must be non-negative"))?;
+        if limit > MAX_DOWNLOADS_PAGE_SIZE {
+            return Err(Error::new(format!(
+                "`first` cannot be greater than {MAX_DOWNLOADS_PAGE_SIZE}"
+            )));
+        }
         let has_previous_page = after.is_some();
-        let mut iter = app.downloads(DownloadListQuery {
-            order: Some(DownloadListOrder::CreatedAtDesc),
-            from_created_at: after.as_ref().map(|cursor| cursor.created_at),
-            after_info_hash: after.as_ref().map(|cursor| cursor.info_hash.clone()),
-            ..Default::default()
-        })?;
+        let mut iter =
+            app.downloads(None, None, after.clone(), DownloadListOrder::CreatedAtDesc)?;
         let downloads = iter
             .by_ref()
             .take(limit + 1)
@@ -72,13 +66,13 @@ impl MutationRoot {
         magnet: MagnetUri,
         target_dir: String,
     ) -> async_graphql::Result<Download> {
-        let app = ctx.data::<App>()?;
+        let app = ctx.data::<Arc<dyn DownloadService>>()?;
         let dl = app.download(magnet.0, target_dir).await?;
         Ok(dl.into())
     }
 }
 
-pub fn build_schema(app: App) -> AppSchema {
+pub fn build_schema(app: Arc<dyn DownloadService>) -> AppSchema {
     Schema::build(QueryRoot, MutationRoot, EmptySubscription)
         .data(app)
         .finish()
@@ -137,7 +131,7 @@ mod tests {
         }
     }
 
-    fn build_test_schema(default_page_size: usize) -> (AppSchema, tempfile::TempDir) {
+    fn build_test_schema() -> (AppSchema, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let store = RedbStore::new(dir.path().join("test.redb").to_str().unwrap()).unwrap();
 
@@ -155,37 +149,14 @@ mod tests {
             Arc::new(NoopTorrentClient),
             Duration::from_secs(60),
             dir.path().join("downloads"),
-            default_page_size,
         );
 
-        (build_schema(app), dir)
-    }
-
-    #[tokio::test]
-    async fn downloads_query_uses_default_page_size() {
-        let (schema, _dir) = build_test_schema(2);
-
-        let response = schema
-            .execute(Request::new(
-                "{ downloads { edges { node { infoHash } } pageInfo { hasNextPage endCursor } } }",
-            ))
-            .await;
-
-        assert!(response.errors.is_empty(), "{:?}", response.errors);
-        let data = response.data.into_json().unwrap();
-        let downloads = &data["downloads"];
-        assert_eq!(downloads["edges"].as_array().unwrap().len(), 2);
-        assert_eq!(
-            downloads["edges"][0]["node"]["infoHash"].as_str().unwrap(),
-            "1111111111111111111111111111111111111111"
-        );
-        assert!(downloads["pageInfo"]["hasNextPage"].as_bool().unwrap());
-        assert!(downloads["pageInfo"]["endCursor"].as_str().is_some());
+        (build_schema(Arc::new(app)), dir)
     }
 
     #[tokio::test]
     async fn downloads_query_uses_cursor_for_next_page() {
-        let (schema, _dir) = build_test_schema(2);
+        let (schema, _dir) = build_test_schema();
 
         let first_response = schema
             .execute(Request::new(
