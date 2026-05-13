@@ -2,7 +2,7 @@ use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 
-use crate::app::download::DownloadsPageCursor;
+use crate::app::download::{DownloadListOrder, DownloadListQuery, MAX_DOWNLOADS_PAGE_SIZE};
 use crate::app::App;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
@@ -31,13 +31,23 @@ impl QueryRoot {
                 usize::try_from(limit).map_err(|_| Error::new("`first` must be non-negative"))
             })
             .transpose()?;
+        let limit = first
+            .unwrap_or(app.downloads_page_size())
+            .clamp(1, MAX_DOWNLOADS_PAGE_SIZE);
         let has_previous_page = after.is_some();
+        let mut iter = app.downloads(DownloadListQuery {
+            order: Some(DownloadListOrder::CreatedAtDesc),
+            from_created_at: after.as_ref().map(|cursor| cursor.created_at),
+            after_info_hash: after.as_ref().map(|cursor| cursor.info_hash.clone()),
+            ..Default::default()
+        })?;
+        let downloads = iter.by_ref().take(limit + 1).collect::<Vec<_>>();
+        let has_next_page = downloads.len() > limit;
 
-        let page = app.downloads_page(after, first)?;
-        let mut connection = Connection::new(has_previous_page, page.has_next_page);
+        let mut connection = Connection::new(has_previous_page, has_next_page);
         connection
             .edges
-            .extend(page.downloads.into_iter().map(|download| {
+            .extend(downloads.into_iter().take(limit).map(|download| {
                 let cursor = encode_downloads_cursor(download.created_at, &download.info_hash);
                 Edge::new(cursor, download.into())
             }));
@@ -81,7 +91,7 @@ fn encode_downloads_cursor(created_at: chrono::DateTime<chrono::Utc>, info_hash:
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
 }
 
-fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DownloadsPageCursor> {
+fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DecodedDownloadsCursor> {
     let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|_| Error::new("invalid downloads cursor"))?;
@@ -95,10 +105,15 @@ fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DownloadsPageC
     let created_at = chrono::DateTime::from_timestamp_micros(created_at)
         .ok_or_else(|| Error::new("invalid downloads cursor"))?;
 
-    Ok(DownloadsPageCursor {
+    Ok(DecodedDownloadsCursor {
         created_at,
         info_hash: info_hash.to_owned(),
     })
+}
+
+struct DecodedDownloadsCursor {
+    created_at: chrono::DateTime<chrono::Utc>,
+    info_hash: String,
 }
 
 #[cfg(test)]

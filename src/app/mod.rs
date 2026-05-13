@@ -8,10 +8,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::{
-    DownloadRepository, DownloadsPage, DownloadsPageCursor, RepositoryError,
-    MAX_DOWNLOADS_PAGE_SIZE,
-};
+use crate::app::download::{DownloadIter, DownloadListQuery, DownloadRepository, RepositoryError};
 use crate::app::error::AppError;
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
@@ -74,17 +71,14 @@ impl App {
         Ok(download)
     }
 
-    pub fn downloads_page(
-        &self,
-        after: Option<DownloadsPageCursor>,
-        limit: Option<usize>,
-    ) -> Result<DownloadsPage, AppError> {
-        let limit = limit
-            .unwrap_or(self.downloads_page_size)
-            .clamp(1, MAX_DOWNLOADS_PAGE_SIZE);
+    pub fn downloads(&self, query: DownloadListQuery) -> Result<DownloadIter, AppError> {
         self.repository
-            .list_downloads_page(after.as_ref(), limit)
+            .list_downloads(&query)
             .map_err(AppError::from)
+    }
+
+    pub fn downloads_page_size(&self) -> usize {
+        self.downloads_page_size
     }
 
     /// Spawns a background task that periodically syncs active download
@@ -108,21 +102,21 @@ impl App {
     }
 
     async fn poll_downloads(&self, _token: &CancellationToken) {
-        let mut active = match self
-            .repository
-            .list_downloads_by_status(DownloadStatus::Submitted)
-        {
-            Ok(d) => d,
+        let mut active = match self.downloads(DownloadListQuery {
+            status: Some(DownloadStatus::Submitted),
+            ..Default::default()
+        }) {
+            Ok(iter) => iter.collect::<Vec<_>>(),
             Err(e) => {
                 tracing::error!("Failed to list Submitted downloads: {e}");
                 return;
             }
         };
-        match self
-            .repository
-            .list_downloads_by_status(DownloadStatus::Downloading)
-        {
-            Ok(d) => active.extend(d),
+        match self.downloads(DownloadListQuery {
+            status: Some(DownloadStatus::Downloading),
+            ..Default::default()
+        }) {
+            Ok(iter) => active.extend(iter),
             Err(e) => {
                 tracing::error!("Failed to list Downloading downloads: {e}");
                 return;
@@ -165,11 +159,11 @@ impl App {
     }
 
     async fn import_downloads(&self, token: &CancellationToken) {
-        let importing = match self
-            .repository
-            .list_downloads_by_status(DownloadStatus::Importing)
-        {
-            Ok(d) => d,
+        let importing = match self.downloads(DownloadListQuery {
+            status: Some(DownloadStatus::Importing),
+            ..Default::default()
+        }) {
+            Ok(iter) => iter.collect::<Vec<_>>(),
             Err(e) => {
                 tracing::error!("Failed to list Importing downloads: {e}");
                 return;
@@ -239,7 +233,9 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{DownloadsPage, RepositoryError, DEFAULT_DOWNLOADS_PAGE_SIZE};
+    use crate::app::download::{
+        DownloadListOrder, DownloadListQuery, RepositoryError, DEFAULT_DOWNLOADS_PAGE_SIZE,
+    };
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
@@ -324,15 +320,15 @@ mod tests {
     }
 
     struct PagingRepository {
-        page: DownloadsPage,
-        last_limit: Mutex<Option<usize>>,
+        downloads: Vec<Download>,
+        last_query: Mutex<Option<DownloadListQuery>>,
     }
 
     impl PagingRepository {
-        fn new(page: DownloadsPage) -> Self {
+        fn new(downloads: Vec<Download>) -> Self {
             Self {
-                page,
-                last_limit: Mutex::new(None),
+                downloads,
+                last_query: Mutex::new(None),
             }
         }
     }
@@ -346,20 +342,12 @@ mod tests {
             unimplemented!()
         }
 
-        fn list_downloads_page(
+        fn list_downloads(
             &self,
-            _after: Option<&DownloadsPageCursor>,
-            limit: usize,
-        ) -> Result<DownloadsPage, RepositoryError> {
-            *self.last_limit.lock().unwrap() = Some(limit);
-            Ok(self.page.clone())
-        }
-
-        fn list_downloads_by_status(
-            &self,
-            _status: DownloadStatus,
-        ) -> Result<Vec<Download>, RepositoryError> {
-            unimplemented!()
+            query: &DownloadListQuery,
+        ) -> Result<DownloadIter, RepositoryError> {
+            *self.last_query.lock().unwrap() = Some(query.clone());
+            Ok(Box::new(self.downloads.clone().into_iter()))
         }
 
         fn update_download(&self, _download: &Download) -> Result<(), RepositoryError> {
@@ -419,12 +407,12 @@ mod tests {
     }
 
     #[test]
-    fn downloads_page_uses_configured_default_limit() {
-        let repo = Arc::new(PagingRepository::new(DownloadsPage {
-            downloads: Vec::new(),
-            end_cursor: None,
-            has_next_page: false,
-        }));
+    fn downloads_returns_iterator_from_repository() {
+        let magnet: Magnet = MAGNET.parse().unwrap();
+        let repo = Arc::new(PagingRepository::new(vec![Download::new(
+            magnet,
+            "/downloads".to_owned(),
+        )]));
         let app = App::new(
             repo.clone(),
             Arc::new(OkTorrentClient),
@@ -433,34 +421,39 @@ mod tests {
             12,
         );
 
-        let page = app.downloads_page(None, None).unwrap();
+        let downloads = app
+            .downloads(DownloadListQuery {
+                status: Some(DownloadStatus::Queued),
+                ..Default::default()
+            })
+            .unwrap()
+            .collect::<Vec<_>>();
 
-        assert!(page.downloads.is_empty());
-        assert_eq!(*repo.last_limit.lock().unwrap(), Some(12));
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].status, DownloadStatus::Queued);
     }
 
     #[test]
-    fn downloads_page_clamps_requested_limit_to_maximum() {
-        let repo = Arc::new(PagingRepository::new(DownloadsPage {
-            downloads: Vec::new(),
-            end_cursor: None,
-            has_next_page: false,
-        }));
+    fn downloads_forwards_query_to_repository() {
+        let repo = Arc::new(PagingRepository::new(Vec::new()));
         let app = App::new(
             repo.clone(),
             Arc::new(OkTorrentClient),
             Duration::from_secs(60),
             PathBuf::from("/downloads"),
-            DEFAULT_DOWNLOADS_PAGE_SIZE,
+            12,
         );
 
-        app.downloads_page(None, Some(MAX_DOWNLOADS_PAGE_SIZE + 1))
-            .unwrap();
+        let query = DownloadListQuery {
+            status: Some(DownloadStatus::Queued),
+            order: Some(DownloadListOrder::CreatedAtAsc),
+            after_info_hash: Some(INFO_HASH.to_owned()),
+            ..Default::default()
+        };
 
-        assert_eq!(
-            *repo.last_limit.lock().unwrap(),
-            Some(MAX_DOWNLOADS_PAGE_SIZE)
-        );
+        app.downloads(query.clone()).unwrap().for_each(drop);
+
+        assert_eq!(*repo.last_query.lock().unwrap(), Some(query));
     }
 
     // --- poll_downloads() ---
