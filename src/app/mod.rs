@@ -1,6 +1,7 @@
 pub mod download;
 pub mod error;
 pub mod torrent;
+pub mod service;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -8,42 +9,48 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::{DownloadIter, DownloadListQuery, DownloadRepository, RepositoryError};
+use crate::app::download::{
+    DownloadCursor, DownloadListOrder, DownloadRepository, RepositoryError,
+};
 use crate::app::error::AppError;
+use crate::app::service::DownloadService;
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
-#[derive(Clone)]
-pub struct App {
-    repository: Arc<dyn DownloadRepository>,
+pub struct App<R>
+where
+    R: DownloadRepository + Send + Sync + 'static,
+{
+    repository: Arc<R>,
     torrent_client: Arc<dyn TorrentClient>,
     poll_interval: Duration,
     /// Directory where the torrent client saves completed downloads.
     download_dir: PathBuf,
-    downloads_page_size: usize,
 }
 
-impl App {
-    pub fn new(
-        repository: Arc<dyn DownloadRepository>,
-        torrent_client: Arc<dyn TorrentClient>,
-        poll_interval: Duration,
-        download_dir: PathBuf,
-        downloads_page_size: usize,
-    ) -> Self {
+impl<R> Clone for App<R>
+where
+    R: DownloadRepository + Send + Sync + 'static,
+{
+    fn clone(&self) -> Self {
         Self {
-            repository,
-            torrent_client,
-            poll_interval,
-            download_dir,
-            downloads_page_size,
+            repository: Arc::clone(&self.repository),
+            torrent_client: Arc::clone(&self.torrent_client),
+            poll_interval: self.poll_interval,
+            download_dir: self.download_dir.clone(),
         }
     }
+}
 
+#[async_trait::async_trait]
+impl<R> DownloadService for App<R>
+where
+    R: DownloadRepository + Send + Sync + 'static,
+{
     /// Submits a new download: persists it as `Queued`, sends the magnet to the
     /// torrent client, then transitions to `Submitted`. If the client rejects the
     /// magnet the record is deleted (rollback) and an error is returned.
-    pub async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
+    async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
         match self.repository.find_by_info_hash(magnet.info_hash()) {
             Ok(_) => Err(AppError::AlreadyExists),
             Err(RepositoryError::NotFound) => Ok(()),
@@ -71,15 +78,36 @@ impl App {
         Ok(download)
     }
 
-    pub fn downloads(&self, query: DownloadListQuery) -> Result<DownloadIter<AppError>, AppError> {
-        let iter = self.repository.list_downloads(&query)?;
+    fn downloads(
+        &self,
+        status: Option<DownloadStatus>,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<DownloadCursor>,
+        order: DownloadListOrder,
+    ) -> Result<Box<dyn Iterator<Item=Result<Download, AppError>> + '_>, AppError> {
         Ok(Box::new(
-            iter.map(|download| download.map_err(AppError::from)),
+            self.repository.list_downloads(status, from, after, order)?
+                .map(|download| download.map_err(AppError::from))
         ))
     }
+}
 
-    pub fn downloads_page_size(&self) -> usize {
-        self.downloads_page_size
+impl<R> App<R>
+where
+    R: DownloadRepository + Send + Sync + 'static,
+{
+    pub fn new(
+        repository: Arc<R>,
+        torrent_client: Arc<dyn TorrentClient>,
+        poll_interval: Duration,
+        download_dir: PathBuf,
+    ) -> Self {
+        Self {
+            repository,
+            torrent_client,
+            poll_interval,
+            download_dir,
+        }
     }
 
     /// Spawns a background task that periodically syncs active download
@@ -103,10 +131,12 @@ impl App {
     }
 
     async fn poll_downloads(&self, _token: &CancellationToken) {
-        let mut active = match self.downloads(DownloadListQuery {
-            status: Some(DownloadStatus::Submitted),
-            ..Default::default()
-        }) {
+        let mut active = match self.downloads(
+            Some(DownloadStatus::Submitted),
+            None,
+            None,
+            DownloadListOrder::CreatedAtDesc,
+        ) {
             Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
                 Ok(downloads) => downloads,
                 Err(e) => {
@@ -119,10 +149,12 @@ impl App {
                 return;
             }
         };
-        match self.downloads(DownloadListQuery {
-            status: Some(DownloadStatus::Downloading),
-            ..Default::default()
-        }) {
+        match self.downloads(
+            Some(DownloadStatus::Downloading),
+            None,
+            None,
+            DownloadListOrder::CreatedAtDesc,
+        ) {
             Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
                 Ok(downloads) => active.extend(downloads),
                 Err(e) => {
@@ -172,10 +204,12 @@ impl App {
     }
 
     async fn import_downloads(&self, token: &CancellationToken) {
-        let importing = match self.downloads(DownloadListQuery {
-            status: Some(DownloadStatus::Importing),
-            ..Default::default()
-        }) {
+        let importing = match self.downloads(
+            Some(DownloadStatus::Importing),
+            None,
+            None,
+            DownloadListOrder::CreatedAtDesc,
+        ) {
             Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
                 Ok(downloads) => downloads,
                 Err(e) => {
@@ -253,7 +287,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 mod tests {
     use super::*;
     use crate::app::download::{
-        DownloadListOrder, DownloadListQuery, RepositoryError, DEFAULT_DOWNLOADS_PAGE_SIZE,
+        DownloadCursor, DownloadListOrder, RepositoryError, DEFAULT_DOWNLOADS_PAGE_SIZE,
     };
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
@@ -316,14 +350,7 @@ mod tests {
 
     /// Creates an `App` backed by a real `RedbStore` in a temporary directory.
     /// The returned `TempDir` must be kept alive for the duration of the test.
-    fn new_app(client: Arc<dyn TorrentClient>) -> (App, tempfile::TempDir) {
-        new_app_with_page_size(client, DEFAULT_DOWNLOADS_PAGE_SIZE)
-    }
-
-    fn new_app_with_page_size(
-        client: Arc<dyn TorrentClient>,
-        downloads_page_size: usize,
-    ) -> (App, tempfile::TempDir) {
+    fn new_app(client: Arc<dyn TorrentClient>) -> (App<RedbStore>, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let download_dir = dir.path().join("downloads");
         std::fs::create_dir_all(&download_dir).unwrap();
@@ -333,21 +360,28 @@ mod tests {
             client,
             Duration::from_secs(60),
             download_dir,
-            downloads_page_size,
         );
         (app, dir)
     }
 
     struct PagingRepository {
         downloads: Vec<Download>,
-        last_query: Mutex<Option<DownloadListQuery>>,
+        last_call: Mutex<Option<RecordedListCall>>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct RecordedListCall {
+        status: Option<DownloadStatus>,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<DownloadCursor>,
+        order: DownloadListOrder,
     }
 
     impl PagingRepository {
         fn new(downloads: Vec<Download>) -> Self {
             Self {
                 downloads,
-                last_query: Mutex::new(None),
+                last_call: Mutex::new(None),
             }
         }
     }
@@ -363,9 +397,17 @@ mod tests {
 
         fn list_downloads(
             &self,
-            query: &DownloadListQuery,
-        ) -> Result<DownloadIter<RepositoryError>, RepositoryError> {
-            *self.last_query.lock().unwrap() = Some(query.clone());
+            status: Option<DownloadStatus>,
+            from: Option<chrono::DateTime<chrono::Utc>>,
+            after: Option<DownloadCursor>,
+            order: DownloadListOrder,
+        ) -> Result<impl Iterator<Item=Result<Download, RepositoryError>>, RepositoryError> {
+            *self.last_call.lock().unwrap() = Some(RecordedListCall {
+                status,
+                from,
+                after,
+                order,
+            });
             Ok(Box::new(self.downloads.clone().into_iter().map(Ok)))
         }
 
@@ -437,14 +479,15 @@ mod tests {
             Arc::new(OkTorrentClient),
             Duration::from_secs(60),
             PathBuf::from("/downloads"),
-            12,
         );
 
         let downloads = app
-            .downloads(DownloadListQuery {
-                status: Some(DownloadStatus::Queued),
-                ..Default::default()
-            })
+            .downloads(
+                Some(DownloadStatus::Queued),
+                None,
+                None,
+                DownloadListOrder::CreatedAtDesc,
+            )
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -461,21 +504,32 @@ mod tests {
             Arc::new(OkTorrentClient),
             Duration::from_secs(60),
             PathBuf::from("/downloads"),
-            12,
         );
 
-        let query = DownloadListQuery {
-            status: Some(DownloadStatus::Queued),
-            order: Some(DownloadListOrder::CreatedAtAsc),
-            after_info_hash: Some(INFO_HASH.to_owned()),
-            ..Default::default()
+        let after = DownloadCursor {
+            status: DownloadStatus::Queued,
+            created_at: chrono::Utc::now(),
+            info_hash: INFO_HASH.to_owned(),
         };
 
-        app.downloads(query.clone())
-            .unwrap()
-            .for_each(|download| drop(download.unwrap()));
+        app.downloads(
+            Some(DownloadStatus::Queued),
+            None,
+            Some(after.clone()),
+            DownloadListOrder::CreatedAtAsc,
+        )
+        .unwrap()
+        .for_each(|download| drop(download.unwrap()));
 
-        assert_eq!(*repo.last_query.lock().unwrap(), Some(query));
+        assert_eq!(
+            *repo.last_call.lock().unwrap(),
+            Some(RecordedListCall {
+                status: Some(DownloadStatus::Queued),
+                from: None,
+                after: Some(after),
+                order: DownloadListOrder::CreatedAtAsc,
+            })
+        );
     }
 
     // --- poll_downloads() ---
