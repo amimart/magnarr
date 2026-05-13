@@ -439,6 +439,7 @@ mod tests {
         let magnet: Magnet = MAGNET.parse().unwrap();
         let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
         dl.name = "torrent-name".to_owned();
+        dl.content_name = "torrent-name".to_owned();
         dl.status = DownloadStatus::Importing;
         app.repository.create_download(&dl).unwrap();
 
@@ -471,6 +472,7 @@ mod tests {
         let magnet: Magnet = MAGNET.parse().unwrap();
         let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
         dl.name = "single-file.mkv".to_owned();
+        dl.content_name = "single-file.mkv".to_owned();
         dl.status = DownloadStatus::Importing;
         app.repository.create_download(&dl).unwrap();
 
@@ -494,6 +496,7 @@ mod tests {
         let mut dl = Download::new(magnet, dst_dir.path().to_str().unwrap().to_owned());
         // No directory at download_dir/"does-not-exist".
         dl.name = "does-not-exist".to_owned();
+        dl.content_name = "does-not-exist".to_owned();
         dl.status = DownloadStatus::Importing;
         app.repository.create_download(&dl).unwrap();
 

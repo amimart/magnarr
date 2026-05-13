@@ -109,7 +109,7 @@ impl TorrentClient for QbittorrentClient {
             hash: t["hash"].as_str().unwrap_or("").to_owned(),
             state: parse_state(t["state"].as_str().unwrap_or("")),
             name: t["name"].as_str().unwrap_or("").to_owned(),
-            content_name: t["content_name"]
+            content_name: t["content_path"]
                 .as_str()
                 .map(PathBuf::from)
                 .and_then(|p| {
