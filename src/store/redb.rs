@@ -269,47 +269,45 @@ impl DownloadRepository for RedbStore {
                             .map_err(|e| RepositoryError::Serialization(e.to_string()))
                     })
                     .transpose()?
+                    .ok_or(RepositoryError::NotFound)?
             };
 
             table
                 .insert(download.info_hash.as_str(), json.as_str())
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
-            let old_created_at_key = old_download
-                .as_ref()
-                .map(|old| created_at_index_key(old.created_at, &old.info_hash));
+            let old_created_at_key =
+                created_at_index_key(old_download.created_at, &old_download.info_hash);
             let new_created_at_key = created_at_index_key(download.created_at, &download.info_hash);
-            if old_created_at_key.as_deref() != Some(new_created_at_key.as_str()) {
+            if old_created_at_key != new_created_at_key {
                 let mut created_at_idx = tx
                     .open_table(CREATED_AT_INDEX)
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-                if let Some(old_key) = old_created_at_key {
-                    created_at_idx
-                        .remove(old_key.as_str())
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-                }
+                created_at_idx
+                    .remove(old_created_at_key.as_str())
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
                 created_at_idx
                     .insert(new_created_at_key.as_str(), download.info_hash.as_str())
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             }
 
-            let old_status_created_at_key = old_download
-                .as_ref()
-                .map(|old| status_created_at_index_key(old.status, old.created_at, &old.info_hash));
+            let old_status_created_at_key = status_created_at_index_key(
+                old_download.status,
+                old_download.created_at,
+                &old_download.info_hash,
+            );
             let new_status_created_at_key = status_created_at_index_key(
                 download.status,
                 download.created_at,
                 &download.info_hash,
             );
-            if old_status_created_at_key.as_deref() != Some(new_status_created_at_key.as_str()) {
+            if old_status_created_at_key != new_status_created_at_key.as_str() {
                 let mut status_created_at_idx = tx
                     .open_table(STATUS_CREATED_AT_INDEX)
                     .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-                if let Some(old_key) = old_status_created_at_key {
-                    status_created_at_idx
-                        .remove(old_key.as_str())
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-                }
+                status_created_at_idx
+                    .remove(old_status_created_at_key.as_str())
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
                 status_created_at_idx
                     .insert(
                         new_status_created_at_key.as_str(),

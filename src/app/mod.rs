@@ -287,9 +287,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{
-        DownloadCursor, DownloadListOrder, RepositoryError,
-    };
+    use crate::app::download::{DownloadCursor, DownloadListOrder, RepositoryError};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
