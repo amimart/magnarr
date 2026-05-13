@@ -1,8 +1,8 @@
 use async_graphql::{Enum, Object};
 use chrono::{DateTime, Utc};
 
-use crate::graphql::scalars::MagnetUri;
 use crate::app::download::SortOrder as AppSortOrder;
+use crate::graphql::scalars::MagnetUri;
 use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
@@ -75,6 +75,10 @@ impl Download {
 
     async fn name(&self) -> &str {
         &self.0.name
+    }
+
+    async fn content_name(&self) -> &str {
+        &self.0.content_name
     }
 
     async fn magnet(&self) -> MagnetUri {

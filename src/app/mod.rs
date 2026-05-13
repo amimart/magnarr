@@ -9,9 +9,7 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::{
-    DownloadCursor, SortOrder, DownloadRepository, RepositoryError,
-};
+use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::app::error::AppError;
 use crate::app::service::DownloadService;
 use crate::app::torrent::{TorrentClient, TorrentClientError};
@@ -129,12 +127,14 @@ where
     }
 
     async fn poll_downloads(&self, _token: &CancellationToken) {
-        let pending = match self.get_pending_downloads()
-            .and_then(|iter| iter.collect::<Result<Vec<_>,_>>()) {
+        let pending = match self
+            .get_pending_downloads()
+            .and_then(|iter| iter.collect::<Result<Vec<_>, _>>())
+        {
             Ok(downloads) => downloads,
             Err(e) => {
                 tracing::error!("Failed to get pending downloads: {e}");
-                return
+                return;
             }
         };
 
@@ -173,14 +173,27 @@ where
         }
     }
 
-    fn get_pending_downloads(&self) -> Result<impl Iterator<Item = Result<Download, RepositoryError>> + '_, RepositoryError> {
-        let downloading_iter = self.repository.list(Some(DownloadStatus::Downloading), None, None, SortOrder::Asc)?;
-        let submitted_iter = self.repository.list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
+    fn get_pending_downloads(
+        &self,
+    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>> + '_, RepositoryError> {
+        let downloading_iter = self.repository.list(
+            Some(DownloadStatus::Downloading),
+            None,
+            None,
+            SortOrder::Asc,
+        )?;
+        let submitted_iter =
+            self.repository
+                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
         Ok(downloading_iter.chain(submitted_iter))
     }
 
     async fn import_downloads(&self, token: &CancellationToken) {
-        let importing = match self.repository.list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc).and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>()) {
+        let importing = match self
+            .repository
+            .list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc)
+            .and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>())
+        {
             Ok(downloads) => downloads,
             Err(e) => {
                 tracing::error!("Failed to get importing downloads: {e}");
@@ -208,7 +221,7 @@ where
             Ok(Ok(())) => {
                 download.status = DownloadStatus::Imported;
                 download.imported_path = Some(import_path.to_string_lossy().into_owned());
-                tracing::info!(info_hash = %download.info_hash, "Download imported to {}", import_path.display());
+                tracing::info!(info_hash = %download.info_hash, name = %download.name, "Download imported to {}", import_path.display());
             }
             Ok(Err(e)) => {
                 tracing::error!(info_hash = %download.info_hash, "Failed to copy torrent files: {e}");
@@ -251,7 +264,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{DownloadCursor, SortOrder, RepositoryError};
+    use crate::app::download::{DownloadCursor, RepositoryError, SortOrder};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
@@ -423,10 +436,7 @@ mod tests {
 
         assert!(matches!(result, Err(AppError::TorrentClient(_))));
         assert!(
-            matches!(
-                app.repository.get(&hash),
-                Err(RepositoryError::NotFound)
-            ),
+            matches!(app.repository.get(&hash), Err(RepositoryError::NotFound)),
             "record should be rolled back on client failure"
         );
     }
@@ -446,12 +456,7 @@ mod tests {
         );
 
         let downloads = app
-            .downloads(
-                Some(DownloadStatus::Queued),
-                None,
-                None,
-                SortOrder::Desc,
-            )
+            .downloads(Some(DownloadStatus::Queued), None, None, SortOrder::Desc)
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -607,10 +612,7 @@ mod tests {
         );
         assert!(expected_dst.join("movie.mkv").exists());
         assert_eq!(
-            app.repository
-                .get(&dl.info_hash)
-                .unwrap()
-                .status,
+            app.repository.get(&dl.info_hash).unwrap().status,
             DownloadStatus::Imported
         );
     }
@@ -659,10 +661,7 @@ mod tests {
         assert_eq!(dl.status, DownloadStatus::Failed);
         assert!(dl.error.is_some());
         assert_eq!(
-            app.repository
-                .get(&dl.info_hash)
-                .unwrap()
-                .status,
+            app.repository.get(&dl.info_hash).unwrap().status,
             DownloadStatus::Failed
         );
     }

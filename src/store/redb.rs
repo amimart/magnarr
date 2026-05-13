@@ -1,10 +1,7 @@
-use std::fmt::format;
 use redb::{Database, ReadableTable, TableDefinition};
 use std::ops::{Bound, RangeBounds};
 
-use crate::app::download::{
-    DownloadCursor, SortOrder, DownloadRepository, RepositoryError,
-};
+use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::store::iter::{RedbDownloadIndexIter, RedbIndexIter};
 use crate::types::{Download, DownloadStatus};
 
@@ -76,13 +73,15 @@ impl Prefix {
     }
 
     fn start_bound(&self) -> Bound<String> {
-        self.value.as_ref()
+        self.value
+            .as_ref()
             .map(|v| Bound::Included(format!("{}:", v)))
             .unwrap_or(Bound::Unbounded)
     }
 
     fn end_bound(&self) -> Bound<String> {
-        self.value.as_ref()
+        self.value
+            .as_ref()
             .map(|v| Bound::Excluded(format!("{};", v)))
             .unwrap_or(Bound::Unbounded)
     }
@@ -135,8 +134,8 @@ impl RedbStore {
 
 impl DownloadRepository for RedbStore {
     fn insert(&self, download: &Download) -> Result<(), RepositoryError> {
-        let json = serde_json::to_string(download)
-            .map_err(|e| RepositoryError::Serde(e.to_string()))?;
+        let json =
+            serde_json::to_string(download).map_err(|e| RepositoryError::Serde(e.to_string()))?;
 
         let tx = self
             .db
@@ -196,8 +195,7 @@ impl DownloadRepository for RedbStore {
             .get(info_hash)
             .map_err(|e| RepositoryError::Storage(e.to_string()))?
             .ok_or(RepositoryError::NotFound)?;
-        serde_json::from_str(entry.value())
-            .map_err(|e| RepositoryError::Serde(e.to_string()))
+        serde_json::from_str(entry.value()).map_err(|e| RepositoryError::Serde(e.to_string()))
     }
 
     fn list(
@@ -216,10 +214,7 @@ impl DownloadRepository for RedbStore {
                 Prefix::new(status_prefix(s).to_string()),
                 Prefix::new(status_prefix(s).to_string()),
             ),
-            (None, Some(f)) => (
-                Prefix::new(created_at_index_prefix(f)),
-                Prefix::empty(),
-            ),
+            (None, Some(f)) => (Prefix::new(created_at_index_prefix(f)), Prefix::empty()),
             (None, None) => (Prefix::empty(), Prefix::empty()),
         };
 
@@ -244,7 +239,7 @@ impl DownloadRepository for RedbStore {
             None => match order {
                 SortOrder::Asc => (lower_prefix.start_bound(), upper_prefix.end_bound()),
                 SortOrder::Desc => (upper_prefix.start_bound(), lower_prefix.end_bound()),
-            }
+            },
             Some(cbound) => match order {
                 SortOrder::Asc => (cbound, upper_prefix.end_bound()),
                 SortOrder::Desc => (upper_prefix.end_bound(), cbound),
@@ -285,8 +280,8 @@ impl DownloadRepository for RedbStore {
     }
 
     fn update(&self, download: &Download) -> Result<(), RepositoryError> {
-        let json = serde_json::to_string(download)
-            .map_err(|e| RepositoryError::Serde(e.to_string()))?;
+        let json =
+            serde_json::to_string(download).map_err(|e| RepositoryError::Serde(e.to_string()))?;
 
         let tx = self
             .db
@@ -483,11 +478,7 @@ mod tests {
         store.insert(&newest).unwrap();
         store.insert(&middle).unwrap();
 
-        let downloads = collect_downloads(
-            store
-                .list(None, None, None, SortOrder::Desc)
-                .unwrap(),
-        );
+        let downloads = collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap());
 
         assert_eq!(
             downloads
@@ -525,12 +516,7 @@ mod tests {
 
         let downloads = collect_downloads(
             store
-                .list(
-                    Some(DownloadStatus::Submitted),
-                    None,
-                    None,
-                    SortOrder::Desc,
-                )
+                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Desc)
                 .unwrap(),
         );
 
@@ -553,11 +539,7 @@ mod tests {
         store.insert(&second).unwrap();
         store.insert(&first).unwrap();
 
-        let downloads = collect_downloads(
-            store
-                .list(None, None, None, SortOrder::Asc)
-                .unwrap(),
-        );
+        let downloads = collect_downloads(store.list(None, None, None, SortOrder::Asc).unwrap());
 
         assert_eq!(downloads[0].info_hash, first.info_hash);
         assert_eq!(downloads[1].info_hash, second.info_hash);
@@ -584,11 +566,7 @@ mod tests {
         store.insert(&same_timestamp).unwrap();
         store.insert(&older).unwrap();
 
-        let first_page = collect_downloads(
-            store
-                .list(None, None, None, SortOrder::Desc)
-                .unwrap(),
-        );
+        let first_page = collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap());
         let second_cursor = &first_page[1];
 
         let downloads = collect_downloads(
@@ -646,20 +624,12 @@ mod tests {
             store.get(&dl.info_hash),
             Err(RepositoryError::NotFound)
         ));
+        assert!(
+            collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap(),).is_empty()
+        );
         assert!(collect_downloads(
             store
-                .list(None, None, None, SortOrder::Desc)
-                .unwrap(),
-        )
-        .is_empty());
-        assert!(collect_downloads(
-            store
-                .list(
-                    Some(DownloadStatus::Queued),
-                    None,
-                    None,
-                    SortOrder::Desc,
-                )
+                .list(Some(DownloadStatus::Queued), None, None, SortOrder::Desc,)
                 .unwrap(),
         )
         .is_empty());

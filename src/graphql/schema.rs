@@ -1,11 +1,11 @@
+use crate::app::download::DownloadCursor;
+use crate::graphql::scalars::MagnetUri;
+use crate::graphql::types::{Download, DownloadStatus, SortOrder};
+use crate::graphql::GraphqlContext;
 use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use crate::app::download::{DownloadCursor};
-use crate::graphql::scalars::MagnetUri;
-use crate::graphql::types::{Download, DownloadStatus, SortOrder};
-use crate::graphql::GraphqlContext;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -52,7 +52,7 @@ impl QueryRoot {
                 Ok(d) => {
                     let cursor = encode_downloads_cursor(&DownloadCursor::from_download(&d));
                     Ok(Edge::new(cursor, d.into()))
-                },
+                }
                 Err(e) => Err(e),
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -115,11 +115,11 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+    use crate::app::download::SortOrder as AppSortOrder;
     use crate::app::error::AppError;
     use crate::app::service::DownloadService;
     use crate::types::DownloadStatus as DomainDownloadStatus;
     use crate::types::{Download as DomainDownload, Magnet};
-    use crate::app::download::SortOrder as AppSortOrder;
     use async_graphql::Request;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
@@ -298,8 +298,7 @@ mod tests {
                 after: Some(DownloadCursor {
                     status: DomainDownloadStatus::Submitted,
                     created_at: Utc.timestamp_opt(20, 0).unwrap(),
-                    info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09"
-                        .to_owned(),
+                    info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09".to_owned(),
                 }),
                 order: AppSortOrder::Desc,
             })
