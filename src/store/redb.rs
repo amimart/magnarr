@@ -1,3 +1,4 @@
+use std::fmt::format;
 use redb::{Database, ReadableTable, TableDefinition};
 use std::ops::{Bound, RangeBounds};
 
@@ -59,6 +60,44 @@ fn status_created_at_index_key(
         status_prefix(status),
         created_at_index_key(created_at, info_hash)
     )
+}
+
+struct Prefix {
+    value: Option<String>,
+}
+
+impl Prefix {
+    fn new(value: String) -> Self {
+        Self { value: Some(value) }
+    }
+
+    fn empty() -> Self {
+        Self { value: None }
+    }
+
+    fn start_bound(&self) -> Bound<String> {
+        self.value.as_ref()
+            .map(|v| Bound::Included(format!("{}:", v)))
+            .unwrap_or(Bound::Unbounded)
+    }
+
+    fn end_bound(&self) -> Bound<String> {
+        self.value.as_ref()
+            .map(|v| Bound::Excluded(format!("{};", v)))
+            .unwrap_or(Bound::Unbounded)
+    }
+}
+
+impl From<&str> for Prefix {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_string())
+    }
+}
+
+impl From<(&str, &str)> for Prefix {
+    fn from(values: (&str, &str)) -> Self {
+        Self::new(format!("{}:{}", values.0, values.1))
+    }
 }
 
 pub struct RedbStore {
@@ -168,24 +207,20 @@ impl DownloadRepository for RedbStore {
         after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
-        let (start_bound, end_bound) = match (status, from) {
+        let (lower_prefix, upper_prefix) = match (status, from) {
             (Some(s), Some(f)) => (
-                Bound::Included(format!(
-                    "{}:{}:",
-                    status_prefix(s),
-                    created_at_index_prefix(f)
-                )),
-                Bound::Excluded(format!("{};", status_prefix(s))),
+                Prefix::from((status_prefix(s), created_at_index_prefix(f).as_str())),
+                Prefix::new(status_prefix(s).to_string()),
             ),
             (Some(s), None) => (
-                Bound::Included(format!("{}:", status_prefix(s))),
-                Bound::Excluded(format!("{};", status_prefix(s))),
+                Prefix::new(status_prefix(s).to_string()),
+                Prefix::new(status_prefix(s).to_string()),
             ),
             (None, Some(f)) => (
-                Bound::Included(format!("{}:", created_at_index_prefix(f))),
-                Bound::Unbounded,
+                Prefix::new(created_at_index_prefix(f)),
+                Prefix::empty(),
             ),
-            (None, None) => (Bound::Unbounded, Bound::Unbounded),
+            (None, None) => (Prefix::empty(), Prefix::empty()),
         };
 
         let (idx_name, cursor_bound) = match status {
@@ -206,10 +241,13 @@ impl DownloadRepository for RedbStore {
         };
 
         let range = match cursor_bound {
-            None => (start_bound, end_bound),
+            None => match order {
+                SortOrder::Asc => (lower_prefix.start_bound(), upper_prefix.end_bound()),
+                SortOrder::Desc => (upper_prefix.start_bound(), lower_prefix.end_bound()),
+            }
             Some(cbound) => match order {
-                SortOrder::Asc => (cbound, end_bound),
-                SortOrder::Desc => (start_bound, cbound),
+                SortOrder::Asc => (cbound, upper_prefix.end_bound()),
+                SortOrder::Desc => (upper_prefix.end_bound(), cbound),
             },
         };
 
