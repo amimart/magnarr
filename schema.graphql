@@ -8,6 +8,7 @@ scalar DateTime
 type Download {
 	infoHash: String!
 	name: String!
+	contentName: String!
 	magnet: MagnetUri!
 	status: DownloadStatus!
 	targetDir: String!
@@ -50,7 +51,6 @@ enum DownloadStatus {
 	QUEUED
 	SUBMITTED
 	DOWNLOADING
-	COMPLETED
 	IMPORTING
 	IMPORTED
 	FAILED
@@ -93,7 +93,12 @@ type QueryRoot {
 	Health check — returns "ok" when the server is running.
 	"""
 	health: String!
-	downloads(after: String, first: Int): DownloadConnection!
+	downloads(status: DownloadStatus, from: DateTime, after: String, first: Int! = 50, order: SortOrder): DownloadConnection!
+}
+
+enum SortOrder {
+	ASC
+	DESC
 }
 
 """
