@@ -20,10 +20,9 @@ fn status_prefix(status: DownloadStatus) -> &'static str {
         DownloadStatus::Queued => "00",
         DownloadStatus::Submitted => "01",
         DownloadStatus::Downloading => "02",
-        DownloadStatus::Completed => "03",
-        DownloadStatus::Importing => "04",
-        DownloadStatus::Imported => "05",
-        DownloadStatus::Failed => "06",
+        DownloadStatus::Importing => "03",
+        DownloadStatus::Imported => "04",
+        DownloadStatus::Failed => "05",
     }
 }
 
