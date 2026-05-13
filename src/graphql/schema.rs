@@ -2,7 +2,9 @@ use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 
-use crate::app::download::{DownloadListOrder, DownloadListQuery, MAX_DOWNLOADS_PAGE_SIZE};
+use crate::app::download::{
+    DownloadCursor, DownloadListOrder, DownloadListQuery, MAX_DOWNLOADS_PAGE_SIZE,
+};
 use crate::app::App;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
@@ -41,14 +43,17 @@ impl QueryRoot {
             after_info_hash: after.as_ref().map(|cursor| cursor.info_hash.clone()),
             ..Default::default()
         })?;
-        let downloads = iter.by_ref().take(limit + 1).collect::<Vec<_>>();
+        let downloads = iter
+            .by_ref()
+            .take(limit + 1)
+            .collect::<Result<Vec<_>, _>>()?;
         let has_next_page = downloads.len() > limit;
 
         let mut connection = Connection::new(has_previous_page, has_next_page);
         connection
             .edges
             .extend(downloads.into_iter().take(limit).map(|download| {
-                let cursor = encode_downloads_cursor(download.created_at, &download.info_hash);
+                let cursor = encode_downloads_cursor(&DownloadCursor::from_download(&download));
                 Edge::new(cursor, download.into())
             }));
         Ok(connection)
@@ -86,34 +91,16 @@ pub fn build_schema_sdl() -> String {
         .sdl()
 }
 
-fn encode_downloads_cursor(created_at: chrono::DateTime<chrono::Utc>, info_hash: &str) -> String {
-    let raw = format!("{}:{info_hash}", created_at.timestamp_micros());
+fn encode_downloads_cursor(cursor: &DownloadCursor) -> String {
+    let raw = serde_json::to_vec(cursor).expect("download cursor should always serialize");
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
 }
 
-fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DecodedDownloadsCursor> {
+fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DownloadCursor> {
     let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|_| Error::new("invalid downloads cursor"))?;
-    let raw = String::from_utf8(raw).map_err(|_| Error::new("invalid downloads cursor"))?;
-    let (created_at, info_hash) = raw
-        .split_once(':')
-        .ok_or_else(|| Error::new("invalid downloads cursor"))?;
-    let created_at = created_at
-        .parse::<i64>()
-        .map_err(|_| Error::new("invalid downloads cursor"))?;
-    let created_at = chrono::DateTime::from_timestamp_micros(created_at)
-        .ok_or_else(|| Error::new("invalid downloads cursor"))?;
-
-    Ok(DecodedDownloadsCursor {
-        created_at,
-        info_hash: info_hash.to_owned(),
-    })
-}
-
-struct DecodedDownloadsCursor {
-    created_at: chrono::DateTime<chrono::Utc>,
-    info_hash: String,
+    serde_json::from_slice(&raw).map_err(|_| Error::new("invalid downloads cursor"))
 }
 
 #[cfg(test)]
