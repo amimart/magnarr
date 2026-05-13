@@ -1,4 +1,4 @@
-use redb::{Database, ReadableTable, TableDefinition};
+use redb::{Database, Range, ReadOnlyTable, ReadableTable, TableDefinition};
 
 use crate::app::download::{
     DownloadIter, DownloadListOrder, DownloadListQuery, DownloadRepository, RepositoryError,
@@ -97,6 +97,42 @@ fn status_range_end(status: DownloadStatus, query: &DownloadListQuery) -> String
             ),
         },
         None => format!("{};", status_prefix(status)),
+    }
+}
+
+struct RedbDownloadIter {
+    downloads: ReadOnlyTable<&'static str, &'static str>,
+    index: Range<'static, &'static str, &'static str>,
+    order: DownloadListOrder,
+}
+
+impl Iterator for RedbDownloadIter {
+    type Item = Result<Download, RepositoryError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let next_entry = match self.order {
+            DownloadListOrder::CreatedAtAsc => self.index.next(),
+            DownloadListOrder::CreatedAtDesc => self.index.next_back(),
+        }?;
+
+        Some(match next_entry {
+            Ok((_, info_hash)) => {
+                let info_hash = info_hash.value();
+                match self
+                    .downloads
+                    .get(info_hash)
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))
+                {
+                    Ok(Some(download)) => serde_json::from_str(download.value())
+                        .map_err(|e| RepositoryError::Serialization(e.to_string())),
+                    Ok(None) => Err(RepositoryError::Backend(format!(
+                        "dangling download index entry for {info_hash}"
+                    ))),
+                    Err(e) => Err(e),
+                }
+            }
+            Err(e) => Err(RepositoryError::Backend(e.to_string())),
+        })
     }
 }
 
@@ -200,110 +236,63 @@ impl DownloadRepository for RedbStore {
             .map_err(|e| RepositoryError::Serialization(e.to_string()))
     }
 
-    fn list_downloads(&self, query: &DownloadListQuery) -> Result<DownloadIter, RepositoryError> {
+    fn list_downloads(
+        &self,
+        query: &DownloadListQuery,
+    ) -> Result<DownloadIter<RepositoryError>, RepositoryError> {
         let tx = self
             .db
             .begin_read()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
-        let mut hashes: Vec<String> = if let Some(status) = query.status {
-            let idx = tx
+        let downloads = tx
+            .open_table(DOWNLOADS)
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+        let index = if let Some(status) = query.status {
+            let table = tx
                 .open_table(STATUS_CREATED_AT_INDEX)
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-            match query.order() {
-                DownloadListOrder::CreatedAtAsc => idx
-                    .range(
-                        status_range_start(status, query).as_str()
-                            ..status_range_end(status, query).as_str(),
-                    )
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                    .map(|entry| {
-                        entry.map(|(_, value)| value.value().to_owned()).map_err(
-                            |err: redb::StorageError| RepositoryError::Backend(err.to_string()),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-                DownloadListOrder::CreatedAtDesc => idx
-                    .range(
-                        format!("{}:", status_prefix(status)).as_str()
-                            ..status_range_end(status, query).as_str(),
-                    )
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                    .map(|entry| {
-                        entry.map(|(_, value)| value.value().to_owned()).map_err(
-                            |err: redb::StorageError| RepositoryError::Backend(err.to_string()),
-                        )
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            }
+            let range = match query.order() {
+                DownloadListOrder::CreatedAtAsc => table.range(
+                    status_range_start(status, query).as_str()
+                        ..status_range_end(status, query).as_str(),
+                ),
+                DownloadListOrder::CreatedAtDesc => table.range(
+                    format!("{}:", status_prefix(status)).as_str()
+                        ..status_range_end(status, query).as_str(),
+                ),
+            };
+            range.map_err(|e| RepositoryError::Backend(e.to_string()))?
         } else {
-            let idx = tx
+            let table = tx
                 .open_table(CREATED_AT_INDEX)
                 .map_err(|e| RepositoryError::Backend(e.to_string()))?;
             match query.order() {
                 DownloadListOrder::CreatedAtAsc => match created_at_range_start(query) {
-                    Some(start) => idx
+                    Some(start) => table
                         .range(start.as_str()..)
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                        .map(|entry| {
-                            entry.map(|(_, value)| value.value().to_owned()).map_err(
-                                |err: redb::StorageError| RepositoryError::Backend(err.to_string()),
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => idx
-                        .iter()
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                        .map(|entry| {
-                            entry.map(|(_, value)| value.value().to_owned()).map_err(
-                                |err: redb::StorageError| RepositoryError::Backend(err.to_string()),
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
+                    None => table
+                        .range::<&str>(..)
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
                 },
                 DownloadListOrder::CreatedAtDesc => match created_at_range_end(query) {
-                    Some(end) => idx
+                    Some(end) => table
                         .range(..end.as_str())
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                        .map(|entry| {
-                            entry.map(|(_, value)| value.value().to_owned()).map_err(
-                                |err: redb::StorageError| RepositoryError::Backend(err.to_string()),
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
-                    None => idx
-                        .iter()
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                        .map(|entry| {
-                            entry.map(|(_, value)| value.value().to_owned()).map_err(
-                                |err: redb::StorageError| RepositoryError::Backend(err.to_string()),
-                            )
-                        })
-                        .collect::<Result<Vec<_>, _>>()?,
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
+                    None => table
+                        .range::<&str>(..)
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
                 },
             }
         };
 
-        if matches!(query.order(), DownloadListOrder::CreatedAtDesc) {
-            hashes.reverse();
-        }
-
-        let table = tx
-            .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-        let mut downloads = Vec::with_capacity(hashes.len());
-        for hash in &hashes {
-            if let Some(entry) = table
-                .get(hash.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?
-            {
-                let download: Download = serde_json::from_str(entry.value())
-                    .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
-                downloads.push(download);
-            }
-        }
-
-        Ok(Box::new(downloads.into_iter()))
+        Ok(Box::new(RedbDownloadIter {
+            downloads,
+            index,
+            order: query.order(),
+        }))
     }
 
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError> {
@@ -454,8 +443,8 @@ mod tests {
         Download::new(magnet, "/downloads".to_owned())
     }
 
-    fn collect_downloads(iter: DownloadIter) -> Vec<Download> {
-        iter.collect()
+    fn collect_downloads(iter: DownloadIter<RepositoryError>) -> Vec<Download> {
+        iter.collect::<Result<Vec<_>, _>>().unwrap()
     }
 
     #[test]

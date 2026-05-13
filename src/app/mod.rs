@@ -71,10 +71,11 @@ impl App {
         Ok(download)
     }
 
-    pub fn downloads(&self, query: DownloadListQuery) -> Result<DownloadIter, AppError> {
-        self.repository
-            .list_downloads(&query)
-            .map_err(AppError::from)
+    pub fn downloads(&self, query: DownloadListQuery) -> Result<DownloadIter<AppError>, AppError> {
+        let iter = self.repository.list_downloads(&query)?;
+        Ok(Box::new(
+            iter.map(|download| download.map_err(AppError::from)),
+        ))
     }
 
     pub fn downloads_page_size(&self) -> usize {
@@ -106,7 +107,13 @@ impl App {
             status: Some(DownloadStatus::Submitted),
             ..Default::default()
         }) {
-            Ok(iter) => iter.collect::<Vec<_>>(),
+            Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
+                Ok(downloads) => downloads,
+                Err(e) => {
+                    tracing::error!("Failed to list Submitted downloads: {e}");
+                    return;
+                }
+            },
             Err(e) => {
                 tracing::error!("Failed to list Submitted downloads: {e}");
                 return;
@@ -116,7 +123,13 @@ impl App {
             status: Some(DownloadStatus::Downloading),
             ..Default::default()
         }) {
-            Ok(iter) => active.extend(iter),
+            Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
+                Ok(downloads) => active.extend(downloads),
+                Err(e) => {
+                    tracing::error!("Failed to list Downloading downloads: {e}");
+                    return;
+                }
+            },
             Err(e) => {
                 tracing::error!("Failed to list Downloading downloads: {e}");
                 return;
@@ -163,7 +176,13 @@ impl App {
             status: Some(DownloadStatus::Importing),
             ..Default::default()
         }) {
-            Ok(iter) => iter.collect::<Vec<_>>(),
+            Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
+                Ok(downloads) => downloads,
+                Err(e) => {
+                    tracing::error!("Failed to list Importing downloads: {e}");
+                    return;
+                }
+            },
             Err(e) => {
                 tracing::error!("Failed to list Importing downloads: {e}");
                 return;
@@ -345,9 +364,9 @@ mod tests {
         fn list_downloads(
             &self,
             query: &DownloadListQuery,
-        ) -> Result<DownloadIter, RepositoryError> {
+        ) -> Result<DownloadIter<RepositoryError>, RepositoryError> {
             *self.last_query.lock().unwrap() = Some(query.clone());
-            Ok(Box::new(self.downloads.clone().into_iter()))
+            Ok(Box::new(self.downloads.clone().into_iter().map(Ok)))
         }
 
         fn update_download(&self, _download: &Download) -> Result<(), RepositoryError> {
@@ -427,7 +446,8 @@ mod tests {
                 ..Default::default()
             })
             .unwrap()
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
 
         assert_eq!(downloads.len(), 1);
         assert_eq!(downloads[0].status, DownloadStatus::Queued);
@@ -451,7 +471,9 @@ mod tests {
             ..Default::default()
         };
 
-        app.downloads(query.clone()).unwrap().for_each(drop);
+        app.downloads(query.clone())
+            .unwrap()
+            .for_each(|download| drop(download.unwrap()));
 
         assert_eq!(*repo.last_query.lock().unwrap(), Some(query));
     }
