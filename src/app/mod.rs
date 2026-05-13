@@ -129,44 +129,16 @@ where
     }
 
     async fn poll_downloads(&self, _token: &CancellationToken) {
-        let mut active = match self.downloads(
-            Some(DownloadStatus::Submitted),
-            None,
-            None,
-            SortOrder::Desc,
-        ) {
-            Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
-                Ok(downloads) => downloads,
-                Err(e) => {
-                    tracing::error!("Failed to list Submitted downloads: {e}");
-                    return;
-                }
-            },
+        let pending = match self.get_pending_downloads()
+            .and_then(|iter| iter.collect::<Result<Vec<_>,_>>()) {
+            Ok(downloads) => downloads,
             Err(e) => {
-                tracing::error!("Failed to list Submitted downloads: {e}");
-                return;
+                tracing::error!("Failed to get pending downloads: {e}");
+                return
             }
         };
-        match self.downloads(
-            Some(DownloadStatus::Downloading),
-            None,
-            None,
-            SortOrder::Desc,
-        ) {
-            Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
-                Ok(downloads) => active.extend(downloads),
-                Err(e) => {
-                    tracing::error!("Failed to list Downloading downloads: {e}");
-                    return;
-                }
-            },
-            Err(e) => {
-                tracing::error!("Failed to list Downloading downloads: {e}");
-                return;
-            }
-        }
 
-        for mut download in active {
+        for mut download in pending {
             match self.torrent_client.status(&download.info_hash).await {
                 Ok(ts) => {
                     let new_status = match ts.state {
@@ -201,22 +173,17 @@ where
         }
     }
 
+    fn get_pending_downloads(&self) -> Result<impl Iterator<Item = Result<Download, RepositoryError>> + '_, RepositoryError> {
+        let downloading_iter = self.repository.list(Some(DownloadStatus::Downloading), None, None, SortOrder::Asc)?;
+        let submitted_iter = self.repository.list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
+        Ok(downloading_iter.chain(submitted_iter))
+    }
+
     async fn import_downloads(&self, token: &CancellationToken) {
-        let importing = match self.downloads(
-            Some(DownloadStatus::Importing),
-            None,
-            None,
-            SortOrder::Desc,
-        ) {
-            Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
-                Ok(downloads) => downloads,
-                Err(e) => {
-                    tracing::error!("Failed to list Importing downloads: {e}");
-                    return;
-                }
-            },
+        let importing = match self.repository.list(Some(DownloadStatus::Downloading), None, None, SortOrder::Asc).and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>()) {
+            Ok(downloads) => downloads,
             Err(e) => {
-                tracing::error!("Failed to list Importing downloads: {e}");
+                tracing::error!("Failed to get importing downloads: {e}");
                 return;
             }
         };
