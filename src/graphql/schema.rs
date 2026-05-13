@@ -101,14 +101,12 @@ fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DownloadCursor
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::time::Duration;
+    use std::sync::Mutex;
 
     use super::*;
-    use crate::app::download::DownloadRepository;
-    use crate::app::torrent::{TorrentClient, TorrentClientError};
-    use crate::app::App;
-    use crate::store::redb::RedbStore;
-    use crate::types::{Download as DomainDownload, Magnet, TorrentStatus};
+    use crate::app::error::AppError;
+    use crate::app::service::DownloadService;
+    use crate::types::{Download as DomainDownload, Magnet};
     use async_graphql::Request;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
@@ -119,51 +117,123 @@ mod tests {
         "magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=third",
     ];
 
-    struct NoopTorrentClient;
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct DownloadsCall {
+        status: Option<crate::types::DownloadStatus>,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<DownloadCursor>,
+        order: DownloadListOrder,
+    }
+
+    struct MockDownloadService {
+        downloads: Vec<DomainDownload>,
+        last_downloads_call: Mutex<Option<DownloadsCall>>,
+    }
 
     #[async_trait]
-    impl TorrentClient for NoopTorrentClient {
-        async fn download(&self, _magnet: &Magnet) -> Result<(), TorrentClientError> {
-            Ok(())
+    impl DownloadService for MockDownloadService {
+        async fn download(
+            &self,
+            _magnet: Magnet,
+            _target_dir: String,
+        ) -> Result<DomainDownload, AppError> {
+            unimplemented!()
         }
 
-        async fn status(&self, info_hash: &str) -> Result<TorrentStatus, TorrentClientError> {
-            Err(TorrentClientError::NotFound(info_hash.to_owned()))
+        fn downloads(
+            &self,
+            status: Option<crate::types::DownloadStatus>,
+            from: Option<chrono::DateTime<chrono::Utc>>,
+            after: Option<DownloadCursor>,
+            order: DownloadListOrder,
+        ) -> Result<Box<dyn Iterator<Item = Result<DomainDownload, AppError>> + '_>, AppError>
+        {
+            *self.last_downloads_call.lock().unwrap() = Some(DownloadsCall {
+                status,
+                from,
+                after: after.clone(),
+                order,
+            });
+
+            let mut downloads = self.downloads.clone();
+            downloads.sort_by(|left, right| {
+                left.created_at
+                    .cmp(&right.created_at)
+                    .then_with(|| left.info_hash.cmp(&right.info_hash))
+            });
+            if matches!(order, DownloadListOrder::CreatedAtDesc) {
+                downloads.reverse();
+            }
+
+            let iter = downloads.into_iter().filter(move |download| {
+                if status.is_some_and(|status| download.status != status) {
+                    return false;
+                }
+
+                if let Some(from) = from {
+                    let key = (download.created_at, download.info_hash.as_str());
+                    let from_key = (from, "");
+                    let after_key = after
+                        .as_ref()
+                        .map(|cursor| (cursor.created_at, cursor.info_hash.as_str()));
+
+                    return match order {
+                        DownloadListOrder::CreatedAtAsc => {
+                            key >= from_key && after_key.is_none_or(|after_key| key > after_key)
+                        }
+                        DownloadListOrder::CreatedAtDesc => {
+                            key <= from_key && after_key.is_none_or(|after_key| key < after_key)
+                        }
+                    };
+                }
+
+                match &after {
+                    Some(after) => match order {
+                        DownloadListOrder::CreatedAtAsc => {
+                            (download.created_at, download.info_hash.as_str())
+                                > (after.created_at, after.info_hash.as_str())
+                        }
+                        DownloadListOrder::CreatedAtDesc => {
+                            (download.created_at, download.info_hash.as_str())
+                                < (after.created_at, after.info_hash.as_str())
+                        }
+                    },
+                    None => true,
+                }
+            });
+
+            Ok(Box::new(iter.map(Ok)))
         }
     }
 
-    fn build_test_schema() -> (AppSchema, tempfile::TempDir) {
-        let dir = tempfile::tempdir().unwrap();
-        let store = RedbStore::new(dir.path().join("test.redb").to_str().unwrap()).unwrap();
-
+    fn new_mock_service() -> Arc<MockDownloadService> {
+        let mut downloads = Vec::new();
         for (index, magnet) in MAGNETS.iter().enumerate() {
             let magnet: Magnet = magnet.parse().unwrap();
             let mut download = DomainDownload::new(magnet, "/downloads".to_owned());
             let ts = Utc.timestamp_opt((index as i64 + 1) * 10, 0).unwrap();
             download.created_at = ts;
             download.updated_at = ts;
-            store.create_download(&download).unwrap();
+            downloads.push(download);
         }
 
-        let app = App::new(
-            Arc::new(store),
-            Arc::new(NoopTorrentClient),
-            Duration::from_secs(60),
-            dir.path().join("downloads"),
-        );
+        Arc::new(MockDownloadService {
+            downloads,
+            last_downloads_call: Mutex::new(None),
+        })
+    }
 
-        (
-            build_schema(GraphqlContext {
-                app: Arc::new(app),
-                max_page_size: 100,
-            }),
-            dir,
-        )
+    fn build_test_schema(service: Arc<dyn DownloadService>, max_page_size: usize) -> AppSchema {
+        build_schema(GraphqlContext {
+            app: service,
+            max_page_size,
+        })
     }
 
     #[tokio::test]
     async fn downloads_query_uses_cursor_for_next_page() {
-        let (schema, _dir) = build_test_schema();
+        let service = new_mock_service();
+        let schema = build_test_schema(service.clone(), 100);
 
         let first_response = schema
             .execute(Request::new(
@@ -202,11 +272,24 @@ mod tests {
         assert!(!second_data["downloads"]["pageInfo"]["hasNextPage"]
             .as_bool()
             .unwrap());
+        assert_eq!(
+            *service.last_downloads_call.lock().unwrap(),
+            Some(DownloadsCall {
+                status: None,
+                from: None,
+                after: Some(DownloadCursor {
+                    status: crate::types::DownloadStatus::Queued,
+                    created_at: Utc.timestamp_opt(20, 0).unwrap(),
+                    info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09".to_owned(),
+                }),
+                order: DownloadListOrder::CreatedAtDesc,
+            })
+        );
     }
 
     #[tokio::test]
     async fn downloads_query_rejects_page_size_over_maximum() {
-        let (schema, _dir) = build_test_schema();
+        let schema = build_test_schema(new_mock_service(), 100);
 
         let response = schema
             .execute(Request::new(
