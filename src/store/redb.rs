@@ -1,8 +1,10 @@
-use redb::{Database, Range, ReadOnlyTable, ReadableTable, TableDefinition};
+use redb::{Database, ReadableTable, TableDefinition};
+use std::ops::{Bound, RangeBounds};
 
 use crate::app::download::{
-    DownloadIter, DownloadListOrder, DownloadListQuery, DownloadRepository, RepositoryError,
+    DownloadCursor, DownloadListOrder, DownloadRepository, RepositoryError,
 };
+use crate::store::iter::{RedbDownloadIndexIter, RedbIndexIter};
 use crate::types::{Download, DownloadStatus};
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
@@ -17,18 +19,26 @@ const I64_SIGN_MASK: u64 = 1 << 63;
 
 fn status_prefix(status: DownloadStatus) -> &'static str {
     match status {
-        DownloadStatus::Queued => "queued",
-        DownloadStatus::Submitted => "submitted",
-        DownloadStatus::Downloading => "downloading",
-        DownloadStatus::Completed => "completed",
-        DownloadStatus::Importing => "importing",
-        DownloadStatus::Imported => "imported",
-        DownloadStatus::Failed => "failed",
+        DownloadStatus::Queued => "00",
+        DownloadStatus::Submitted => "01",
+        DownloadStatus::Downloading => "02",
+        DownloadStatus::Completed => "03",
+        DownloadStatus::Importing => "04",
+        DownloadStatus::Imported => "05",
+        DownloadStatus::Failed => "06",
     }
 }
 
 fn normalize_i64(value: i64) -> u64 {
     (value as u64) ^ I64_SIGN_MASK
+}
+
+fn as_str_bound(bound: Bound<&String>) -> Bound<&str> {
+    match bound {
+        Bound::Included(value) => Bound::Included(value.as_str()),
+        Bound::Excluded(value) => Bound::Excluded(value.as_str()),
+        Bound::Unbounded => Bound::Unbounded,
+    }
 }
 
 fn created_at_index_prefix(created_at: chrono::DateTime<chrono::Utc>) -> String {
@@ -49,91 +59,6 @@ fn status_created_at_index_key(
         status_prefix(status),
         created_at_index_key(created_at, info_hash)
     )
-}
-
-fn created_at_range_start(query: &DownloadListQuery) -> Option<String> {
-    query
-        .from_created_at
-        .map(|created_at| match query.after_info_hash.as_deref() {
-            Some(info_hash) => format!("{}\0", created_at_index_key(created_at, info_hash)),
-            None => format!("{}:", created_at_index_prefix(created_at)),
-        })
-}
-
-fn created_at_range_end(query: &DownloadListQuery) -> Option<String> {
-    query
-        .from_created_at
-        .map(|created_at| match query.after_info_hash.as_deref() {
-            Some(info_hash) => created_at_index_key(created_at, info_hash),
-            None => format!("{};", created_at_index_prefix(created_at)),
-        })
-}
-
-fn status_range_start(status: DownloadStatus, query: &DownloadListQuery) -> String {
-    match query.from_created_at {
-        Some(created_at) => match query.after_info_hash.as_deref() {
-            Some(info_hash) => format!(
-                "{}\0",
-                status_created_at_index_key(status, created_at, info_hash)
-            ),
-            None => format!(
-                "{}:{}:",
-                status_prefix(status),
-                created_at_index_prefix(created_at)
-            ),
-        },
-        None => format!("{}:", status_prefix(status)),
-    }
-}
-
-fn status_range_end(status: DownloadStatus, query: &DownloadListQuery) -> String {
-    match query.from_created_at {
-        Some(created_at) => match query.after_info_hash.as_deref() {
-            Some(info_hash) => status_created_at_index_key(status, created_at, info_hash),
-            None => format!(
-                "{}:{};",
-                status_prefix(status),
-                created_at_index_prefix(created_at)
-            ),
-        },
-        None => format!("{};", status_prefix(status)),
-    }
-}
-
-struct RedbDownloadIter {
-    downloads: ReadOnlyTable<&'static str, &'static str>,
-    index: Range<'static, &'static str, &'static str>,
-    order: DownloadListOrder,
-}
-
-impl Iterator for RedbDownloadIter {
-    type Item = Result<Download, RepositoryError>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let next_entry = match self.order {
-            DownloadListOrder::CreatedAtAsc => self.index.next(),
-            DownloadListOrder::CreatedAtDesc => self.index.next_back(),
-        }?;
-
-        Some(match next_entry {
-            Ok((_, info_hash)) => {
-                let info_hash = info_hash.value();
-                match self
-                    .downloads
-                    .get(info_hash)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))
-                {
-                    Ok(Some(download)) => serde_json::from_str(download.value())
-                        .map_err(|e| RepositoryError::Serialization(e.to_string())),
-                    Ok(None) => Err(RepositoryError::Backend(format!(
-                        "dangling download index entry for {info_hash}"
-                    ))),
-                    Err(e) => Err(e),
-                }
-            }
-            Err(e) => Err(RepositoryError::Backend(e.to_string())),
-        })
-    }
 }
 
 pub struct RedbStore {
@@ -238,61 +163,83 @@ impl DownloadRepository for RedbStore {
 
     fn list_downloads(
         &self,
-        query: &DownloadListQuery,
-    ) -> Result<DownloadIter<RepositoryError>, RepositoryError> {
+        status: Option<DownloadStatus>,
+        from: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<DownloadCursor>,
+        order: DownloadListOrder,
+    ) -> Result<impl Iterator<Item=Result<Download, RepositoryError>>, RepositoryError> {
+        let (start_bound, end_bound) = match (status, from) {
+            (Some(s), Some(f)) => (
+                Bound::Included(format!(
+                    "{}:{}:",
+                    status_prefix(s),
+                    created_at_index_prefix(f)
+                )),
+                Bound::Excluded(format!("{};", status_prefix(s))),
+            ),
+            (Some(s), None) => (
+                Bound::Included(format!("{}:", status_prefix(s))),
+                Bound::Excluded(format!("{};", status_prefix(s))),
+            ),
+            (None, Some(f)) => (
+                Bound::Included(format!("{}:", created_at_index_prefix(f))),
+                Bound::Unbounded,
+            ),
+            (None, None) => (Bound::Unbounded, Bound::Unbounded),
+        };
+
+        let (idx_name, cursor_bound) = match status {
+            Some(_) => (
+                STATUS_CREATED_AT_INDEX,
+                after.map(|c| Bound::Excluded(
+                    status_created_at_index_key(c.status, c.created_at, &c.info_hash),
+                )),
+            ),
+            None => (
+                STATUS_CREATED_AT_INDEX,
+                after.map(|c| Bound::Excluded(
+                    created_at_index_key(c.created_at, &c.info_hash),
+                )),
+            ),
+        };
+
+        let range = match cursor_bound {
+            None => (start_bound, end_bound),
+            Some(cbound) => {
+                match order {
+                    DownloadListOrder::CreatedAtAsc => (cbound, end_bound),
+                    DownloadListOrder::CreatedAtDesc => (start_bound, cbound),
+                }
+            },
+        };
+
+        let ref_range = (as_str_bound(range.start_bound()), as_str_bound(range.end_bound()));
+
         let tx = self
             .db
             .begin_read()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
+        let idx = tx.open_table(idx_name)
+            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+
+        let iter: RedbIndexIter = match order {
+                DownloadListOrder::CreatedAtAsc => Box::new(
+                    idx.range::<&str>(ref_range)
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
+                ),
+                DownloadListOrder::CreatedAtDesc => Box::new(
+                    idx.range::<&str>(ref_range)
+                        .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                        .rev(),
+                ),
+            };
+
         let downloads = tx
             .open_table(DOWNLOADS)
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
-        let index = if let Some(status) = query.status {
-            let table = tx
-                .open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-            let range = match query.order() {
-                DownloadListOrder::CreatedAtAsc => table.range(
-                    status_range_start(status, query).as_str()
-                        ..status_range_end(status, query).as_str(),
-                ),
-                DownloadListOrder::CreatedAtDesc => table.range(
-                    format!("{}:", status_prefix(status)).as_str()
-                        ..status_range_end(status, query).as_str(),
-                ),
-            };
-            range.map_err(|e| RepositoryError::Backend(e.to_string()))?
-        } else {
-            let table = tx
-                .open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
-            match query.order() {
-                DownloadListOrder::CreatedAtAsc => match created_at_range_start(query) {
-                    Some(start) => table
-                        .range(start.as_str()..)
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
-                    None => table
-                        .range::<&str>(..)
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
-                },
-                DownloadListOrder::CreatedAtDesc => match created_at_range_end(query) {
-                    Some(end) => table
-                        .range(..end.as_str())
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
-                    None => table
-                        .range::<&str>(..)
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
-                },
-            }
-        };
-
-        Ok(Box::new(RedbDownloadIter {
-            downloads,
-            index,
-            order: query.order(),
-        }))
+        Ok(RedbDownloadIndexIter::new(downloads, iter))
     }
 
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError> {
@@ -443,7 +390,7 @@ mod tests {
         Download::new(magnet, "/downloads".to_owned())
     }
 
-    fn collect_downloads(iter: DownloadIter<RepositoryError>) -> Vec<Download> {
+    fn collect_downloads(iter: impl Iterator<Item=Result<Download, RepositoryError>>) -> Vec<Download> {
         iter.collect::<Result<Vec<_>, _>>().unwrap()
     }
 
@@ -494,8 +441,11 @@ mod tests {
         store.create_download(&newest).unwrap();
         store.create_download(&middle).unwrap();
 
-        let downloads =
-            collect_downloads(store.list_downloads(&DownloadListQuery::default()).unwrap());
+        let downloads = collect_downloads(
+            store
+                .list_downloads(None, None, None, DownloadListOrder::CreatedAtDesc)
+                .unwrap(),
+        );
 
         assert_eq!(
             downloads
@@ -533,10 +483,12 @@ mod tests {
 
         let downloads = collect_downloads(
             store
-                .list_downloads(&DownloadListQuery {
-                    status: Some(DownloadStatus::Submitted),
-                    ..Default::default()
-                })
+                .list_downloads(
+                    Some(DownloadStatus::Submitted),
+                    None,
+                    None,
+                    DownloadListOrder::CreatedAtDesc,
+                )
                 .unwrap(),
         );
 
@@ -561,10 +513,7 @@ mod tests {
 
         let downloads = collect_downloads(
             store
-                .list_downloads(&DownloadListQuery {
-                    order: Some(DownloadListOrder::CreatedAtAsc),
-                    ..Default::default()
-                })
+                .list_downloads(None, None, None, DownloadListOrder::CreatedAtAsc)
                 .unwrap(),
         );
 
@@ -593,17 +542,21 @@ mod tests {
         store.create_download(&same_timestamp).unwrap();
         store.create_download(&older).unwrap();
 
-        let first_page =
-            collect_downloads(store.list_downloads(&DownloadListQuery::default()).unwrap());
+        let first_page = collect_downloads(
+            store
+                .list_downloads(None, None, None, DownloadListOrder::CreatedAtDesc)
+                .unwrap(),
+        );
         let second_cursor = &first_page[1];
 
         let downloads = collect_downloads(
             store
-                .list_downloads(&DownloadListQuery {
-                    from_created_at: Some(second_cursor.created_at),
-                    after_info_hash: Some(second_cursor.info_hash.clone()),
-                    ..Default::default()
-                })
+                .list_downloads(
+                    None,
+                    None,
+                    Some(DownloadCursor::from_download(second_cursor)),
+                    DownloadListOrder::CreatedAtDesc,
+                )
                 .unwrap(),
         );
 
@@ -628,10 +581,12 @@ mod tests {
 
         let filtered = collect_downloads(
             store
-                .list_downloads(&DownloadListQuery {
-                    status: Some(DownloadStatus::Downloading),
-                    ..Default::default()
-                })
+                .list_downloads(
+                    Some(DownloadStatus::Downloading),
+                    None,
+                    None,
+                    DownloadListOrder::CreatedAtDesc,
+                )
                 .unwrap(),
         );
         assert_eq!(filtered.len(), 1);
@@ -649,16 +604,20 @@ mod tests {
             store.find_by_info_hash(&dl.info_hash),
             Err(RepositoryError::NotFound)
         ));
-        assert!(
-            collect_downloads(store.list_downloads(&DownloadListQuery::default()).unwrap())
-                .is_empty()
-        );
         assert!(collect_downloads(
             store
-                .list_downloads(&DownloadListQuery {
-                    status: Some(DownloadStatus::Queued),
-                    ..Default::default()
-                })
+                .list_downloads(None, None, None, DownloadListOrder::CreatedAtDesc)
+                .unwrap(),
+        )
+        .is_empty());
+        assert!(collect_downloads(
+            store
+                .list_downloads(
+                    Some(DownloadStatus::Queued),
+                    None,
+                    None,
+                    DownloadListOrder::CreatedAtDesc,
+                )
                 .unwrap(),
         )
         .is_empty());
