@@ -8,18 +8,24 @@ use axum::extract::State;
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Router;
+use std::sync::Arc;
 
-use crate::app::App;
+use crate::app::service::DownloadService;
 use crate::graphql::schema::{build_schema, AppSchema};
 
 pub struct GraphqlServer {
     schema: AppSchema,
 }
 
+pub struct GraphqlContext {
+    pub app: Arc<dyn DownloadService>,
+    pub max_page_size: usize,
+}
+
 impl GraphqlServer {
-    pub fn new(app: App) -> Self {
+    pub fn new(app: Arc<dyn DownloadService>, max_page_size: usize) -> Self {
         Self {
-            schema: build_schema(app),
+            schema: build_schema(GraphqlContext { app, max_page_size }),
         }
     }
 

@@ -1206,6 +1206,7 @@ dependencies = [
  "async-graphql-axum",
  "async-trait",
  "axum",
+ "base64",
  "chrono",
  "clap",
  "humantime",

@@ -1,6 +1,7 @@
 use async_graphql::{Enum, Object};
 use chrono::{DateTime, Utc};
 
+use crate::app::download::SortOrder as AppSortOrder;
 use crate::graphql::scalars::MagnetUri;
 use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 
@@ -9,7 +10,6 @@ pub enum DownloadStatus {
     Queued,
     Submitted,
     Downloading,
-    Completed,
     Importing,
     Imported,
     Failed,
@@ -21,10 +21,37 @@ impl From<DomainDownloadStatus> for DownloadStatus {
             DomainDownloadStatus::Queued => Self::Queued,
             DomainDownloadStatus::Submitted => Self::Submitted,
             DomainDownloadStatus::Downloading => Self::Downloading,
-            DomainDownloadStatus::Completed => Self::Completed,
             DomainDownloadStatus::Importing => Self::Importing,
             DomainDownloadStatus::Imported => Self::Imported,
             DomainDownloadStatus::Failed => Self::Failed,
+        }
+    }
+}
+
+impl From<DownloadStatus> for DomainDownloadStatus {
+    fn from(s: DownloadStatus) -> Self {
+        match s {
+            DownloadStatus::Queued => Self::Queued,
+            DownloadStatus::Submitted => Self::Submitted,
+            DownloadStatus::Downloading => Self::Downloading,
+            DownloadStatus::Importing => Self::Importing,
+            DownloadStatus::Imported => Self::Imported,
+            DownloadStatus::Failed => Self::Failed,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Enum)]
+pub enum SortOrder {
+    Asc,
+    Desc,
+}
+
+impl From<SortOrder> for AppSortOrder {
+    fn from(s: SortOrder) -> Self {
+        match s {
+            SortOrder::Asc => Self::Asc,
+            SortOrder::Desc => Self::Desc,
         }
     }
 }
@@ -45,6 +72,10 @@ impl Download {
 
     async fn name(&self) -> &str {
         &self.0.name
+    }
+
+    async fn content_name(&self) -> &str {
+        &self.0.content_name
     }
 
     async fn magnet(&self) -> MagnetUri {

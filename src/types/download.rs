@@ -6,7 +6,6 @@ pub enum DownloadStatus {
     Queued,
     Submitted,
     Downloading,
-    Completed,
     Importing,
     Imported,
     Failed,
