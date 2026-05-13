@@ -32,17 +32,17 @@ impl Iterator for RedbDownloadIndexIter {
                 match self
                     .downloads
                     .get(info_hash)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))
                 {
                     Ok(Some(download)) => serde_json::from_str(download.value())
-                        .map_err(|e| RepositoryError::Serialization(e.to_string())),
-                    Ok(None) => Err(RepositoryError::Backend(format!(
+                        .map_err(|e| RepositoryError::Serde(e.to_string())),
+                    Ok(None) => Err(RepositoryError::Storage(format!(
                         "dangling download index entry for {info_hash}"
                     ))),
                     Err(e) => Err(e),
                 }
             }
-            Err(e) => Err(RepositoryError::Backend(e.to_string())),
+            Err(e) => Err(RepositoryError::Storage(e.to_string())),
         })
     }
 }

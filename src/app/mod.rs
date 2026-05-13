@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::download::{
-    DownloadCursor, DownloadListOrder, DownloadRepository, RepositoryError,
+    DownloadCursor, SortOrder, DownloadRepository, RepositoryError,
 };
 use crate::app::error::AppError;
 use crate::app::service::DownloadService;
@@ -47,22 +47,19 @@ impl<R> DownloadService for App<R>
 where
     R: DownloadRepository + Send + Sync + 'static,
 {
-    /// Submits a new download: persists it as `Queued`, sends the magnet to the
-    /// torrent client, then transitions to `Submitted`. If the client rejects the
-    /// magnet the record is deleted (rollback) and an error is returned.
     async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
-        match self.repository.find_by_info_hash(magnet.info_hash()) {
+        match self.repository.get(magnet.info_hash()) {
             Ok(_) => Err(AppError::AlreadyExists),
             Err(RepositoryError::NotFound) => Ok(()),
             Err(e) => Err(e.into()),
         }?;
 
         let mut download = Download::new(magnet, target_dir);
-        self.repository.create_download(&download)?;
+        self.repository.insert(&download)?;
 
         if let Err(e) = self.torrent_client.download(&download.magnet).await {
             tracing::error!("Failed to submit torrent download: {e}");
-            if let Err(del_err) = self.repository.delete_download(&download.info_hash) {
+            if let Err(del_err) = self.repository.remove(&download.info_hash) {
                 tracing::error!(
                     info_hash = %download.info_hash,
                     "Failed to rollback download after torrent client error: {del_err}"
@@ -73,7 +70,7 @@ where
 
         download.status = DownloadStatus::Submitted;
         download.touch();
-        self.repository.update_download(&download)?;
+        self.repository.update(&download)?;
 
         Ok(download)
     }
@@ -83,11 +80,11 @@ where
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
-        order: DownloadListOrder,
+        order: SortOrder,
     ) -> Result<Box<dyn Iterator<Item = Result<Download, AppError>> + '_>, AppError> {
         Ok(Box::new(
             self.repository
-                .list_downloads(status, from, after, order)?
+                .list(status, from, after, order)?
                 .map(|download| download.map_err(AppError::from)),
         ))
     }
@@ -136,7 +133,7 @@ where
             Some(DownloadStatus::Submitted),
             None,
             None,
-            DownloadListOrder::CreatedAtDesc,
+            SortOrder::Desc,
         ) {
             Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
                 Ok(downloads) => downloads,
@@ -154,7 +151,7 @@ where
             Some(DownloadStatus::Downloading),
             None,
             None,
-            DownloadListOrder::CreatedAtDesc,
+            SortOrder::Desc,
         ) {
             Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
                 Ok(downloads) => active.extend(downloads),
@@ -186,14 +183,14 @@ where
                         download.content_name = ts.content_name;
                         download.status = new_status;
                         download.touch();
-                        if let Err(e) = self.repository.update_download(&download) {
+                        if let Err(e) = self.repository.update(&download) {
                             tracing::error!(info_hash = %download.info_hash, "Failed to update download status: {e}");
                         }
                     }
                 }
                 Err(TorrentClientError::NotFound(_)) => {
                     tracing::warn!(info_hash = %download.info_hash, "Torrent not found, removing download");
-                    if let Err(e) = self.repository.delete_download(&download.info_hash) {
+                    if let Err(e) = self.repository.remove(&download.info_hash) {
                         tracing::error!(info_hash = %download.info_hash, "Failed to remove download: {e}");
                     }
                 }
@@ -209,7 +206,7 @@ where
             Some(DownloadStatus::Importing),
             None,
             None,
-            DownloadListOrder::CreatedAtDesc,
+            SortOrder::Desc,
         ) {
             Ok(iter) => match iter.collect::<Result<Vec<_>, _>>() {
                 Ok(downloads) => downloads,
@@ -259,7 +256,7 @@ where
         }
 
         download.touch();
-        if let Err(e) = self.repository.update_download(download) {
+        if let Err(e) = self.repository.update(download) {
             tracing::error!(info_hash = %download.info_hash, "Failed to update download after import: {e}");
         }
     }
@@ -287,7 +284,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{DownloadCursor, DownloadListOrder, RepositoryError};
+    use crate::app::download::{DownloadCursor, SortOrder, RepositoryError};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
@@ -373,7 +370,7 @@ mod tests {
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
-        order: DownloadListOrder,
+        order: SortOrder,
     }
 
     impl PagingRepository {
@@ -386,20 +383,20 @@ mod tests {
     }
 
     impl DownloadRepository for PagingRepository {
-        fn create_download(&self, _download: &Download) -> Result<(), RepositoryError> {
+        fn insert(&self, _download: &Download) -> Result<(), RepositoryError> {
             unimplemented!()
         }
 
-        fn find_by_info_hash(&self, _info_hash: &str) -> Result<Download, RepositoryError> {
+        fn get(&self, _info_hash: &str) -> Result<Download, RepositoryError> {
             unimplemented!()
         }
 
-        fn list_downloads(
+        fn list(
             &self,
             status: Option<DownloadStatus>,
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
-            order: DownloadListOrder,
+            order: SortOrder,
         ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>
         {
             *self.last_call.lock().unwrap() = Some(RecordedListCall {
@@ -411,11 +408,11 @@ mod tests {
             Ok(Box::new(self.downloads.clone().into_iter().map(Ok)))
         }
 
-        fn update_download(&self, _download: &Download) -> Result<(), RepositoryError> {
+        fn update(&self, _download: &Download) -> Result<(), RepositoryError> {
             unimplemented!()
         }
 
-        fn delete_download(&self, _info_hash: &str) -> Result<(), RepositoryError> {
+        fn remove(&self, _info_hash: &str) -> Result<(), RepositoryError> {
             unimplemented!()
         }
     }
@@ -432,7 +429,7 @@ mod tests {
         assert_eq!(dl.status, DownloadStatus::Submitted);
         assert!(dl.updated_at >= dl.created_at);
 
-        let stored = app.repository.find_by_info_hash(&dl.info_hash).unwrap();
+        let stored = app.repository.get(&dl.info_hash).unwrap();
         assert_eq!(stored.status, DownloadStatus::Submitted);
     }
 
@@ -460,7 +457,7 @@ mod tests {
         assert!(matches!(result, Err(AppError::TorrentClient(_))));
         assert!(
             matches!(
-                app.repository.find_by_info_hash(&hash),
+                app.repository.get(&hash),
                 Err(RepositoryError::NotFound)
             ),
             "record should be rolled back on client failure"
@@ -486,7 +483,7 @@ mod tests {
                 Some(DownloadStatus::Queued),
                 None,
                 None,
-                DownloadListOrder::CreatedAtDesc,
+                SortOrder::Desc,
             )
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
@@ -516,7 +513,7 @@ mod tests {
             Some(DownloadStatus::Queued),
             None,
             Some(after.clone()),
-            DownloadListOrder::CreatedAtAsc,
+            SortOrder::Asc,
         )
         .unwrap()
         .for_each(|download| drop(download.unwrap()));
@@ -527,7 +524,7 @@ mod tests {
                 status: Some(DownloadStatus::Queued),
                 from: None,
                 after: Some(after),
-                order: DownloadListOrder::CreatedAtAsc,
+                order: SortOrder::Asc,
             })
         );
     }
@@ -546,7 +543,7 @@ mod tests {
 
         assert!(
             matches!(
-                app.repository.find_by_info_hash(INFO_HASH),
+                app.repository.get(INFO_HASH),
                 Err(RepositoryError::NotFound)
             ),
             "download should be removed when torrent is not found on client"
@@ -568,7 +565,7 @@ mod tests {
         let token = CancellationToken::new();
         app.poll_downloads(&token).await;
 
-        let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
+        let dl = app.repository.get(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Importing);
         assert_eq!(dl.name, "resolved-name");
         assert_eq!(dl.content_name, "resolved-name.mkv");
@@ -589,7 +586,7 @@ mod tests {
         let token = CancellationToken::new();
         app.poll_downloads(&token).await;
 
-        let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
+        let dl = app.repository.get(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Downloading);
         assert_eq!(dl.name, "resolved-name");
         assert_eq!(dl.content_name, "resolved-name.mkv");
@@ -610,7 +607,7 @@ mod tests {
         let token = CancellationToken::new();
         app.poll_downloads(&token).await;
 
-        let dl = app.repository.find_by_info_hash(INFO_HASH).unwrap();
+        let dl = app.repository.get(INFO_HASH).unwrap();
         assert_eq!(dl.status, DownloadStatus::Failed);
     }
 
@@ -631,7 +628,7 @@ mod tests {
         dl.name = "torrent-name".to_owned();
         dl.content_name = "torrent-name".to_owned();
         dl.status = DownloadStatus::Importing;
-        app.repository.create_download(&dl).unwrap();
+        app.repository.insert(&dl).unwrap();
 
         app.import_download(&mut dl).await;
 
@@ -644,7 +641,7 @@ mod tests {
         assert!(expected_dst.join("movie.mkv").exists());
         assert_eq!(
             app.repository
-                .find_by_info_hash(&dl.info_hash)
+                .get(&dl.info_hash)
                 .unwrap()
                 .status,
             DownloadStatus::Imported
@@ -664,7 +661,7 @@ mod tests {
         dl.name = "single-file.mkv".to_owned();
         dl.content_name = "single-file.mkv".to_owned();
         dl.status = DownloadStatus::Importing;
-        app.repository.create_download(&dl).unwrap();
+        app.repository.insert(&dl).unwrap();
 
         app.import_download(&mut dl).await;
 
@@ -688,7 +685,7 @@ mod tests {
         dl.name = "does-not-exist".to_owned();
         dl.content_name = "does-not-exist".to_owned();
         dl.status = DownloadStatus::Importing;
-        app.repository.create_download(&dl).unwrap();
+        app.repository.insert(&dl).unwrap();
 
         app.import_download(&mut dl).await;
 
@@ -696,7 +693,7 @@ mod tests {
         assert!(dl.error.is_some());
         assert_eq!(
             app.repository
-                .find_by_info_hash(&dl.info_hash)
+                .get(&dl.info_hash)
                 .unwrap()
                 .status,
             DownloadStatus::Failed

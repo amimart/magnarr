@@ -3,10 +3,10 @@ use thiserror::Error;
 use crate::types::{Download, DownloadStatus};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DownloadListOrder {
-    CreatedAtAsc,
+pub enum SortOrder {
+    Asc,
     #[default]
-    CreatedAtDesc,
+    Desc,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -33,21 +33,21 @@ pub enum RepositoryError {
     #[error("already exists")]
     AlreadyExists,
     #[error("backend error: {0}")]
-    Backend(String),
+    Storage(String),
     #[error("serialization error: {0}")]
-    Serialization(String),
+    Serde(String),
 }
 
 pub trait DownloadRepository: Send + Sync {
-    fn create_download(&self, download: &Download) -> Result<(), RepositoryError>;
-    fn find_by_info_hash(&self, info_hash: &str) -> Result<Download, RepositoryError>;
-    fn list_downloads(
+    fn insert(&self, download: &Download) -> Result<(), RepositoryError>;
+    fn get(&self, info_hash: &str) -> Result<Download, RepositoryError>;
+    fn list(
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
-        order: DownloadListOrder,
+        order: SortOrder,
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>;
-    fn update_download(&self, download: &Download) -> Result<(), RepositoryError>;
-    fn delete_download(&self, info_hash: &str) -> Result<(), RepositoryError>;
+    fn update(&self, download: &Download) -> Result<(), RepositoryError>;
+    fn remove(&self, info_hash: &str) -> Result<(), RepositoryError>;
 }

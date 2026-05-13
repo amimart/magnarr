@@ -2,7 +2,7 @@ use redb::{Database, ReadableTable, TableDefinition};
 use std::ops::{Bound, RangeBounds};
 
 use crate::app::download::{
-    DownloadCursor, DownloadListOrder, DownloadRepository, RepositoryError,
+    DownloadCursor, SortOrder, DownloadRepository, RepositoryError,
 };
 use crate::store::iter::{RedbDownloadIndexIter, RedbIndexIter};
 use crate::types::{Download, DownloadStatus};
@@ -70,47 +70,47 @@ impl RedbStore {
         if let Some(parent) = std::path::Path::new(path).parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             }
         }
 
-        let db = Database::create(path).map_err(|e| RepositoryError::Backend(e.to_string()))?;
+        let db = Database::create(path).map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
         let tx = db
             .begin_write()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         {
             tx.open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             tx.open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             tx.open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
         Ok(Self { db })
     }
 }
 
 impl DownloadRepository for RedbStore {
-    fn create_download(&self, download: &Download) -> Result<(), RepositoryError> {
+    fn insert(&self, download: &Download) -> Result<(), RepositoryError> {
         let json = serde_json::to_string(download)
-            .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
+            .map_err(|e| RepositoryError::Serde(e.to_string()))?;
 
         let tx = self
             .db
             .begin_write()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         {
             let mut table = tx
                 .open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             if table
                 .get(download.info_hash.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?
                 .is_some()
             {
                 return Err(RepositoryError::AlreadyExists);
@@ -118,15 +118,15 @@ impl DownloadRepository for RedbStore {
 
             table
                 .insert(download.info_hash.as_str(), json.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let created_at_key = created_at_index_key(download.created_at, &download.info_hash);
             let mut created_at_idx = tx
                 .open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             created_at_idx
                 .insert(created_at_key.as_str(), download.info_hash.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let status_created_at_key = status_created_at_index_key(
                 download.status,
@@ -135,38 +135,38 @@ impl DownloadRepository for RedbStore {
             );
             let mut status_created_at_idx = tx
                 .open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             status_created_at_idx
                 .insert(status_created_at_key.as_str(), download.info_hash.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         Ok(())
     }
 
-    fn find_by_info_hash(&self, info_hash: &str) -> Result<Download, RepositoryError> {
+    fn get(&self, info_hash: &str) -> Result<Download, RepositoryError> {
         let tx = self
             .db
             .begin_read()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         let table = tx
             .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         let entry = table
             .get(info_hash)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?
             .ok_or(RepositoryError::NotFound)?;
         serde_json::from_str(entry.value())
-            .map_err(|e| RepositoryError::Serialization(e.to_string()))
+            .map_err(|e| RepositoryError::Serde(e.to_string()))
     }
 
-    fn list_downloads(
+    fn list(
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
-        order: DownloadListOrder,
+        order: SortOrder,
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
         let (start_bound, end_bound) = match (status, from) {
             (Some(s), Some(f)) => (
@@ -208,8 +208,8 @@ impl DownloadRepository for RedbStore {
         let range = match cursor_bound {
             None => (start_bound, end_bound),
             Some(cbound) => match order {
-                DownloadListOrder::CreatedAtAsc => (cbound, end_bound),
-                DownloadListOrder::CreatedAtDesc => (start_bound, cbound),
+                SortOrder::Asc => (cbound, end_bound),
+                SortOrder::Desc => (start_bound, cbound),
             },
         };
 
@@ -221,52 +221,52 @@ impl DownloadRepository for RedbStore {
         let tx = self
             .db
             .begin_read()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
         let idx = tx
             .open_table(idx_name)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
         let iter: RedbIndexIter = match order {
-            DownloadListOrder::CreatedAtAsc => Box::new(
+            SortOrder::Asc => Box::new(
                 idx.range::<&str>(ref_range)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?,
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?,
             ),
-            DownloadListOrder::CreatedAtDesc => Box::new(
+            SortOrder::Desc => Box::new(
                 idx.range::<&str>(ref_range)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?
                     .rev(),
             ),
         };
 
         let downloads = tx
             .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
         Ok(RedbDownloadIndexIter::new(downloads, iter))
     }
 
-    fn update_download(&self, download: &Download) -> Result<(), RepositoryError> {
+    fn update(&self, download: &Download) -> Result<(), RepositoryError> {
         let json = serde_json::to_string(download)
-            .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
+            .map_err(|e| RepositoryError::Serde(e.to_string()))?;
 
         let tx = self
             .db
             .begin_write()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         {
             let mut table = tx
                 .open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let old_download = {
                 let entry = table
                     .get(download.info_hash.as_str())
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
                 entry
                     .map(|value| {
                         serde_json::from_str::<Download>(value.value())
-                            .map_err(|e| RepositoryError::Serialization(e.to_string()))
+                            .map_err(|e| RepositoryError::Serde(e.to_string()))
                     })
                     .transpose()?
                     .ok_or(RepositoryError::NotFound)?
@@ -274,7 +274,7 @@ impl DownloadRepository for RedbStore {
 
             table
                 .insert(download.info_hash.as_str(), json.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let old_created_at_key =
                 created_at_index_key(old_download.created_at, &old_download.info_hash);
@@ -282,13 +282,13 @@ impl DownloadRepository for RedbStore {
             if old_created_at_key != new_created_at_key {
                 let mut created_at_idx = tx
                     .open_table(CREATED_AT_INDEX)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
                 created_at_idx
                     .remove(old_created_at_key.as_str())
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
                 created_at_idx
                     .insert(new_created_at_key.as_str(), download.info_hash.as_str())
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             }
 
             let old_status_created_at_key = status_created_at_index_key(
@@ -304,54 +304,54 @@ impl DownloadRepository for RedbStore {
             if old_status_created_at_key != new_status_created_at_key.as_str() {
                 let mut status_created_at_idx = tx
                     .open_table(STATUS_CREATED_AT_INDEX)
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
                 status_created_at_idx
                     .remove(old_status_created_at_key.as_str())
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
                 status_created_at_idx
                     .insert(
                         new_status_created_at_key.as_str(),
                         download.info_hash.as_str(),
                     )
-                    .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             }
         }
         tx.commit()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         Ok(())
     }
 
-    fn delete_download(&self, info_hash: &str) -> Result<(), RepositoryError> {
+    fn remove(&self, info_hash: &str) -> Result<(), RepositoryError> {
         let tx = self
             .db
             .begin_write()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         {
             let mut table = tx
                 .open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let entry = table
                 .get(info_hash)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?
                 .ok_or(RepositoryError::NotFound)?;
 
             let download: Download = serde_json::from_str(entry.value())
-                .map_err(|e| RepositoryError::Serialization(e.to_string()))?;
+                .map_err(|e| RepositoryError::Serde(e.to_string()))?;
 
             drop(entry);
 
             table
                 .remove(info_hash)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let created_at_key = created_at_index_key(download.created_at, &download.info_hash);
             let mut created_at_idx = tx
                 .open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             created_at_idx
                 .remove(created_at_key.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
             let status_created_at_key = status_created_at_index_key(
                 download.status,
@@ -360,13 +360,13 @@ impl DownloadRepository for RedbStore {
             );
             let mut status_created_at_idx = tx
                 .open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
             status_created_at_idx
                 .remove(status_created_at_key.as_str())
-                .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         }
         tx.commit()
-            .map_err(|e| RepositoryError::Backend(e.to_string()))?;
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
         Ok(())
     }
 }
@@ -402,9 +402,9 @@ mod tests {
     fn create_then_find_returns_same_download() {
         let (store, _dir) = new_store();
         let dl = make_download(MAGNET1);
-        store.create_download(&dl).unwrap();
+        store.insert(&dl).unwrap();
 
-        let fetched = store.find_by_info_hash(&dl.info_hash).unwrap();
+        let fetched = store.get(&dl.info_hash).unwrap();
         assert_eq!(fetched.info_hash, dl.info_hash);
         assert_eq!(fetched.magnet, dl.magnet);
         assert_eq!(fetched.status, dl.status);
@@ -414,15 +414,15 @@ mod tests {
     fn create_twice_same_info_hash_returns_already_exists() {
         let (store, _dir) = new_store();
         let dl = make_download(MAGNET1);
-        store.create_download(&dl).unwrap();
-        let result = store.create_download(&dl);
+        store.insert(&dl).unwrap();
+        let result = store.insert(&dl);
         assert!(matches!(result, Err(RepositoryError::AlreadyExists)));
     }
 
     #[test]
     fn find_unknown_info_hash_returns_not_found() {
         let (store, _dir) = new_store();
-        let result = store.find_by_info_hash("0000000000000000000000000000000000000000");
+        let result = store.get("0000000000000000000000000000000000000000");
         assert!(matches!(result, Err(RepositoryError::NotFound)));
     }
 
@@ -441,13 +441,13 @@ mod tests {
         middle.created_at = Utc.timestamp_opt(20, 0).unwrap();
         middle.updated_at = middle.created_at;
 
-        store.create_download(&oldest).unwrap();
-        store.create_download(&newest).unwrap();
-        store.create_download(&middle).unwrap();
+        store.insert(&oldest).unwrap();
+        store.insert(&newest).unwrap();
+        store.insert(&middle).unwrap();
 
         let downloads = collect_downloads(
             store
-                .list_downloads(None, None, None, DownloadListOrder::CreatedAtDesc)
+                .list(None, None, None, SortOrder::Desc)
                 .unwrap(),
         );
 
@@ -481,17 +481,17 @@ mod tests {
         submitted_older.created_at = Utc.timestamp_opt(20, 0).unwrap();
         submitted_older.updated_at = submitted_older.created_at;
 
-        store.create_download(&queued).unwrap();
-        store.create_download(&submitted).unwrap();
-        store.create_download(&submitted_older).unwrap();
+        store.insert(&queued).unwrap();
+        store.insert(&submitted).unwrap();
+        store.insert(&submitted_older).unwrap();
 
         let downloads = collect_downloads(
             store
-                .list_downloads(
+                .list(
                     Some(DownloadStatus::Submitted),
                     None,
                     None,
-                    DownloadListOrder::CreatedAtDesc,
+                    SortOrder::Desc,
                 )
                 .unwrap(),
         );
@@ -512,12 +512,12 @@ mod tests {
         second.created_at = Utc.timestamp_opt(20, 0).unwrap();
         second.updated_at = second.created_at;
 
-        store.create_download(&second).unwrap();
-        store.create_download(&first).unwrap();
+        store.insert(&second).unwrap();
+        store.insert(&first).unwrap();
 
         let downloads = collect_downloads(
             store
-                .list_downloads(None, None, None, DownloadListOrder::CreatedAtAsc)
+                .list(None, None, None, SortOrder::Asc)
                 .unwrap(),
         );
 
@@ -542,24 +542,24 @@ mod tests {
         older.created_at = Utc.timestamp_opt(20, 0).unwrap();
         older.updated_at = older.created_at;
 
-        store.create_download(&newest).unwrap();
-        store.create_download(&same_timestamp).unwrap();
-        store.create_download(&older).unwrap();
+        store.insert(&newest).unwrap();
+        store.insert(&same_timestamp).unwrap();
+        store.insert(&older).unwrap();
 
         let first_page = collect_downloads(
             store
-                .list_downloads(None, None, None, DownloadListOrder::CreatedAtDesc)
+                .list(None, None, None, SortOrder::Desc)
                 .unwrap(),
         );
         let second_cursor = &first_page[1];
 
         let downloads = collect_downloads(
             store
-                .list_downloads(
+                .list(
                     None,
                     None,
                     Some(DownloadCursor::from_download(second_cursor)),
-                    DownloadListOrder::CreatedAtDesc,
+                    SortOrder::Desc,
                 )
                 .unwrap(),
         );
@@ -572,24 +572,24 @@ mod tests {
     fn update_download_persists_changes() {
         let (store, _dir) = new_store();
         let dl = make_download(MAGNET1);
-        store.create_download(&dl).unwrap();
+        store.insert(&dl).unwrap();
 
         let mut updated = dl.clone();
         updated.status = DownloadStatus::Downloading;
         updated.touch();
-        store.update_download(&updated).unwrap();
+        store.update(&updated).unwrap();
 
-        let fetched = store.find_by_info_hash(&dl.info_hash).unwrap();
+        let fetched = store.get(&dl.info_hash).unwrap();
         assert_eq!(fetched.status, DownloadStatus::Downloading);
         assert!(fetched.updated_at >= dl.updated_at);
 
         let filtered = collect_downloads(
             store
-                .list_downloads(
+                .list(
                     Some(DownloadStatus::Downloading),
                     None,
                     None,
-                    DownloadListOrder::CreatedAtDesc,
+                    SortOrder::Desc,
                 )
                 .unwrap(),
         );
@@ -601,26 +601,26 @@ mod tests {
     fn delete_download_removes_it_from_indexes() {
         let (store, _dir) = new_store();
         let dl = make_download(MAGNET1);
-        store.create_download(&dl).unwrap();
-        store.delete_download(&dl.info_hash).unwrap();
+        store.insert(&dl).unwrap();
+        store.remove(&dl.info_hash).unwrap();
 
         assert!(matches!(
-            store.find_by_info_hash(&dl.info_hash),
+            store.get(&dl.info_hash),
             Err(RepositoryError::NotFound)
         ));
         assert!(collect_downloads(
             store
-                .list_downloads(None, None, None, DownloadListOrder::CreatedAtDesc)
+                .list(None, None, None, SortOrder::Desc)
                 .unwrap(),
         )
         .is_empty());
         assert!(collect_downloads(
             store
-                .list_downloads(
+                .list(
                     Some(DownloadStatus::Queued),
                     None,
                     None,
-                    DownloadListOrder::CreatedAtDesc,
+                    SortOrder::Desc,
                 )
                 .unwrap(),
         )

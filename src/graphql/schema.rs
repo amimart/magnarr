@@ -2,7 +2,7 @@ use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 
-use crate::app::download::{DownloadCursor, DownloadListOrder};
+use crate::app::download::{DownloadCursor, SortOrder};
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
 use crate::graphql::GraphqlContext;
@@ -37,7 +37,7 @@ impl QueryRoot {
         let has_previous_page = after.is_some();
         let mut iter =
             ctx.app
-                .downloads(None, None, after.clone(), DownloadListOrder::CreatedAtDesc)?;
+                .downloads(None, None, after.clone(), SortOrder::Desc)?;
         let downloads = iter
             .by_ref()
             .take(limit + 1)
@@ -122,7 +122,7 @@ mod tests {
         status: Option<crate::types::DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
-        order: DownloadListOrder,
+        order: SortOrder,
     }
 
     struct MockDownloadService {
@@ -145,7 +145,7 @@ mod tests {
             status: Option<crate::types::DownloadStatus>,
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
-            order: DownloadListOrder,
+            order: SortOrder,
         ) -> Result<Box<dyn Iterator<Item = Result<DomainDownload, AppError>> + '_>, AppError>
         {
             *self.last_downloads_call.lock().unwrap() = Some(DownloadsCall {
@@ -161,7 +161,7 @@ mod tests {
                     .cmp(&right.created_at)
                     .then_with(|| left.info_hash.cmp(&right.info_hash))
             });
-            if matches!(order, DownloadListOrder::CreatedAtDesc) {
+            if matches!(order, SortOrder::Desc) {
                 downloads.reverse();
             }
 
@@ -178,10 +178,10 @@ mod tests {
                         .map(|cursor| (cursor.created_at, cursor.info_hash.as_str()));
 
                     return match order {
-                        DownloadListOrder::CreatedAtAsc => {
+                        SortOrder::Asc => {
                             key >= from_key && after_key.is_none_or(|after_key| key > after_key)
                         }
-                        DownloadListOrder::CreatedAtDesc => {
+                        SortOrder::Desc => {
                             key <= from_key && after_key.is_none_or(|after_key| key < after_key)
                         }
                     };
@@ -189,11 +189,11 @@ mod tests {
 
                 match &after {
                     Some(after) => match order {
-                        DownloadListOrder::CreatedAtAsc => {
+                        SortOrder::Asc => {
                             (download.created_at, download.info_hash.as_str())
                                 > (after.created_at, after.info_hash.as_str())
                         }
-                        DownloadListOrder::CreatedAtDesc => {
+                        SortOrder::Desc => {
                             (download.created_at, download.info_hash.as_str())
                                 < (after.created_at, after.info_hash.as_str())
                         }
@@ -282,7 +282,7 @@ mod tests {
                     created_at: Utc.timestamp_opt(20, 0).unwrap(),
                     info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09".to_owned(),
                 }),
-                order: DownloadListOrder::CreatedAtDesc,
+                order: SortOrder::Desc,
             })
         );
     }
