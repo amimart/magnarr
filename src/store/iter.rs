@@ -1,6 +1,6 @@
-use redb::{AccessGuard, ReadOnlyTable};
 use crate::app::download::RepositoryError;
 use crate::types::Download;
+use redb::{AccessGuard, ReadOnlyTable};
 
 pub struct RedbDownloadIndexIter {
     downloads: ReadOnlyTable<&'static str, &'static str>,

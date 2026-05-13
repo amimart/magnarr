@@ -47,7 +47,7 @@ pub trait DownloadRepository: Send + Sync {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: DownloadListOrder,
-    ) -> Result<impl Iterator<Item=Result<Download, RepositoryError>>, RepositoryError>;
+    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>;
     fn update_download(&self, download: &Download) -> Result<(), RepositoryError>;
     fn delete_download(&self, info_hash: &str) -> Result<(), RepositoryError>;
 }

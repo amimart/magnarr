@@ -167,7 +167,7 @@ impl DownloadRepository for RedbStore {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: DownloadListOrder,
-    ) -> Result<impl Iterator<Item=Result<Download, RepositoryError>>, RepositoryError> {
+    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
         let (start_bound, end_bound) = match (status, from) {
             (Some(s), Some(f)) => (
                 Bound::Included(format!(
@@ -191,49 +191,53 @@ impl DownloadRepository for RedbStore {
         let (idx_name, cursor_bound) = match status {
             Some(_) => (
                 STATUS_CREATED_AT_INDEX,
-                after.map(|c| Bound::Excluded(
-                    status_created_at_index_key(c.status, c.created_at, &c.info_hash),
-                )),
+                after.map(|c| {
+                    Bound::Excluded(status_created_at_index_key(
+                        c.status,
+                        c.created_at,
+                        &c.info_hash,
+                    ))
+                }),
             ),
             None => (
                 STATUS_CREATED_AT_INDEX,
-                after.map(|c| Bound::Excluded(
-                    created_at_index_key(c.created_at, &c.info_hash),
-                )),
+                after.map(|c| Bound::Excluded(created_at_index_key(c.created_at, &c.info_hash))),
             ),
         };
 
         let range = match cursor_bound {
             None => (start_bound, end_bound),
-            Some(cbound) => {
-                match order {
-                    DownloadListOrder::CreatedAtAsc => (cbound, end_bound),
-                    DownloadListOrder::CreatedAtDesc => (start_bound, cbound),
-                }
+            Some(cbound) => match order {
+                DownloadListOrder::CreatedAtAsc => (cbound, end_bound),
+                DownloadListOrder::CreatedAtDesc => (start_bound, cbound),
             },
         };
 
-        let ref_range = (as_str_bound(range.start_bound()), as_str_bound(range.end_bound()));
+        let ref_range = (
+            as_str_bound(range.start_bound()),
+            as_str_bound(range.end_bound()),
+        );
 
         let tx = self
             .db
             .begin_read()
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
-        let idx = tx.open_table(idx_name)
+        let idx = tx
+            .open_table(idx_name)
             .map_err(|e| RepositoryError::Backend(e.to_string()))?;
 
         let iter: RedbIndexIter = match order {
-                DownloadListOrder::CreatedAtAsc => Box::new(
-                    idx.range::<&str>(ref_range)
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?,
-                ),
-                DownloadListOrder::CreatedAtDesc => Box::new(
-                    idx.range::<&str>(ref_range)
-                        .map_err(|e| RepositoryError::Backend(e.to_string()))?
-                        .rev(),
-                ),
-            };
+            DownloadListOrder::CreatedAtAsc => Box::new(
+                idx.range::<&str>(ref_range)
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?,
+            ),
+            DownloadListOrder::CreatedAtDesc => Box::new(
+                idx.range::<&str>(ref_range)
+                    .map_err(|e| RepositoryError::Backend(e.to_string()))?
+                    .rev(),
+            ),
+        };
 
         let downloads = tx
             .open_table(DOWNLOADS)
@@ -390,7 +394,9 @@ mod tests {
         Download::new(magnet, "/downloads".to_owned())
     }
 
-    fn collect_downloads(iter: impl Iterator<Item=Result<Download, RepositoryError>>) -> Vec<Download> {
+    fn collect_downloads(
+        iter: impl Iterator<Item = Result<Download, RepositoryError>>,
+    ) -> Vec<Download> {
         iter.collect::<Result<Vec<_>, _>>().unwrap()
     }
 

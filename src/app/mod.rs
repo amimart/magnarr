@@ -1,7 +1,7 @@
 pub mod download;
 pub mod error;
-pub mod torrent;
 pub mod service;
+pub mod torrent;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -84,10 +84,11 @@ where
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: DownloadListOrder,
-    ) -> Result<Box<dyn Iterator<Item=Result<Download, AppError>> + '_>, AppError> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Download, AppError>> + '_>, AppError> {
         Ok(Box::new(
-            self.repository.list_downloads(status, from, after, order)?
-                .map(|download| download.map_err(AppError::from))
+            self.repository
+                .list_downloads(status, from, after, order)?
+                .map(|download| download.map_err(AppError::from)),
         ))
     }
 }
@@ -287,7 +288,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 mod tests {
     use super::*;
     use crate::app::download::{
-        DownloadCursor, DownloadListOrder, RepositoryError, DEFAULT_DOWNLOADS_PAGE_SIZE,
+        DownloadCursor, DownloadListOrder, RepositoryError,
     };
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
@@ -401,7 +402,8 @@ mod tests {
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
             order: DownloadListOrder,
-        ) -> Result<impl Iterator<Item=Result<Download, RepositoryError>>, RepositoryError> {
+        ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>
+        {
             *self.last_call.lock().unwrap() = Some(RecordedListCall {
                 status,
                 from,

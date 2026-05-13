@@ -3,9 +3,9 @@ use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 
 use crate::app::download::{DownloadCursor, DownloadListOrder};
-use crate::graphql::GraphqlContext;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::Download;
+use crate::graphql::GraphqlContext;
 
 pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
@@ -26,15 +26,18 @@ impl QueryRoot {
     ) -> async_graphql::Result<Connection<String, Download, EmptyFields, EmptyFields>> {
         let ctx = ctx.data::<GraphqlContext>()?;
         let after = after.as_deref().map(decode_downloads_cursor).transpose()?;
-        let limit = usize::try_from(first).map_err(|_| Error::new("`first` must be non-negative"))?;
+        let limit =
+            usize::try_from(first).map_err(|_| Error::new("`first` must be non-negative"))?;
         if limit > ctx.max_page_size {
             return Err(Error::new(format!(
-                "`first` cannot be greater than {}", ctx.max_page_size
+                "`first` cannot be greater than {}",
+                ctx.max_page_size
             )));
         }
         let has_previous_page = after.is_some();
         let mut iter =
-            ctx.app.downloads(None, None, after.clone(), DownloadListOrder::CreatedAtDesc)?;
+            ctx.app
+                .downloads(None, None, after.clone(), DownloadListOrder::CreatedAtDesc)?;
         let downloads = iter
             .by_ref()
             .take(limit + 1)
@@ -100,15 +103,15 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use async_graphql::Request;
-    use async_trait::async_trait;
-    use chrono::{TimeZone, Utc};
-    use crate::app::App;
     use super::*;
     use crate::app::download::DownloadRepository;
     use crate::app::torrent::{TorrentClient, TorrentClientError};
+    use crate::app::App;
     use crate::store::redb::RedbStore;
     use crate::types::{Download as DomainDownload, Magnet, TorrentStatus};
+    use async_graphql::Request;
+    use async_trait::async_trait;
+    use chrono::{TimeZone, Utc};
 
     const MAGNETS: [&str; 3] = [
         "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=first",
@@ -149,7 +152,13 @@ mod tests {
             dir.path().join("downloads"),
         );
 
-        (build_schema(GraphqlContext{app: Arc::new(app), max_page_size: 100}), dir)
+        (
+            build_schema(GraphqlContext {
+                app: Arc::new(app),
+                max_page_size: 100,
+            }),
+            dir,
+        )
     }
 
     #[tokio::test]

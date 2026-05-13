@@ -1,2 +1,2 @@
-pub mod redb;
 mod iter;
+pub mod redb;

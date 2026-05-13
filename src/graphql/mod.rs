@@ -2,13 +2,13 @@ mod scalars;
 pub mod schema;
 mod types;
 
-use std::sync::Arc;
 use async_graphql::http::GraphiQLSource;
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
 use axum::extract::State;
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::Router;
+use std::sync::Arc;
 
 use crate::app::service::DownloadService;
 use crate::graphql::schema::{build_schema, AppSchema};
@@ -25,9 +25,7 @@ pub struct GraphqlContext {
 impl GraphqlServer {
     pub fn new(app: Arc<dyn DownloadService>, max_page_size: usize) -> Self {
         Self {
-            schema: build_schema(GraphqlContext {
-                app, max_page_size,
-            }),
+            schema: build_schema(GraphqlContext { app, max_page_size }),
         }
     }
 
