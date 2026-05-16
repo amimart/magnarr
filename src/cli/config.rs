@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use super::{PathArg, StartArgs};
 
-#[derive(Default, Debug, Clone, serde::Deserialize)]
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub app: AppConfig,
@@ -12,7 +12,7 @@ pub struct Config {
     pub torrent_client: TorrentClientConfig,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     /// How often the app polls the torrent client for status updates.
@@ -38,29 +38,7 @@ impl Default for AppConfig {
     }
 }
 
-/// Discriminated union of supported torrent clients.
-///
-/// Example config file:
-/// ```yaml
-/// torrent_client:
-///   qbittorrent:
-///     host: http://localhost:9393
-///     username: admin
-///     password: secret
-/// ```
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TorrentClientConfig {
-    Qbittorrent(QbittorrentConfig),
-}
-
-impl Default for TorrentClientConfig {
-    fn default() -> Self {
-        Self::Qbittorrent(QbittorrentConfig::default())
-    }
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ServerConfig {
     pub listen_addr: String,
@@ -76,7 +54,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct StoreConfig {
     pub path: PathArg,
@@ -96,7 +74,29 @@ impl Default for StoreConfig {
     }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+/// Discriminated union of supported torrent clients.
+///
+/// Example config file:
+/// ```yaml
+/// torrent_client:
+///   qbittorrent:
+///     host: http://localhost:9393
+///     username: admin
+///     password: secret
+/// ```
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TorrentClientConfig {
+    Qbittorrent(QbittorrentConfig),
+}
+
+impl Default for TorrentClientConfig {
+    fn default() -> Self {
+        Self::Qbittorrent(QbittorrentConfig::default())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct QbittorrentConfig {
     pub host: String,
@@ -114,10 +114,14 @@ impl Default for QbittorrentConfig {
     }
 }
 
+pub fn get_config_path(home: &Path) -> PathBuf {
+    home.join("config.yaml")
+}
+
 /// Load config respecting precedence: defaults < file < env vars < CLI args.
 pub fn load_config(home: &Path, args: StartArgs) -> Result<Config, config::ConfigError> {
     config::Config::builder()
-        .add_source(config::File::from(home.join("config.yaml")).required(false))
+        .add_source(config::File::from(get_config_path(home)).required(false))
         .add_source(config::Environment::with_prefix("MAGNARR").separator("_"))
         .set_override_option(
             "app.poll_interval",
