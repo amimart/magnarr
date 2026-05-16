@@ -33,7 +33,7 @@ async-graphql-axum = "7"
 axum = "0.8"
 base64 = "0.22"
 
-redb = "2"
+redb = "4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "cookies", "rustls-tls"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
