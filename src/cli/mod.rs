@@ -2,6 +2,8 @@ pub mod config;
 mod start;
 mod version;
 
+use std::fmt::{Debug, Display};
+use std::ops::Deref;
 use clap::{Parser, Subcommand};
 
 pub use config::{load_config, Config, ConfigError};
@@ -11,8 +13,32 @@ pub use config::{load_config, Config, ConfigError};
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+
+
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PathArg(pub std::path::PathBuf);
+
+impl Display for PathArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }}
+
+impl Deref for PathArg {
+    type Target = std::path::PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
+impl std::str::FromStr for PathArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let expanded = shellexpand::tilde(value);
+        Ok(Self(std::path::PathBuf::from(expanded.as_ref())))
+    }
+}
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Start the magnarr server
