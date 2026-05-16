@@ -39,6 +39,28 @@ impl std::str::FromStr for PathArg {
         Ok(Self(std::path::PathBuf::from(expanded.as_ref())))
     }
 }
+
+#[derive(clap::ValueEnum, Debug, Clone)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl AsRef<str> for LogLevel {
+    fn as_ref(&self) -> &str {
+        match self {
+            LogLevel::Trace => "trace",
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Start the magnarr server
