@@ -330,7 +330,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let download_dir = dir.path().join("downloads");
         std::fs::create_dir_all(&download_dir).unwrap();
-        let store = RedbStore::new(dir.path().join("test.redb").to_str().unwrap()).unwrap();
+        let store = RedbStore::new(dir.path().join("test.redb")).unwrap();
         let app = App::new(
             Arc::new(store),
             client,

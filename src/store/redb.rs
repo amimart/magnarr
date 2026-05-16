@@ -1,6 +1,6 @@
 use redb::{Database, ReadableTable, TableDefinition};
 use std::ops::{Bound, RangeBounds};
-
+use std::path::PathBuf;
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::store::iter::{RedbDownloadIndexIter, RedbIndexIter};
 use crate::types::{Download, DownloadStatus};
@@ -103,8 +103,8 @@ pub struct RedbStore {
 }
 
 impl RedbStore {
-    pub fn new(path: &str) -> Result<Self, RepositoryError> {
-        if let Some(parent) = std::path::Path::new(path).parent() {
+    pub fn new(path: PathBuf) -> Result<Self, RepositoryError> {
+        if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| RepositoryError::Storage(e.to_string()))?;
@@ -415,7 +415,7 @@ mod tests {
     fn new_store() -> (RedbStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.redb");
-        let store = RedbStore::new(path.to_str().unwrap()).unwrap();
+        let store = RedbStore::new(path).unwrap();
         (store, dir)
     }
 
