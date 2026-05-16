@@ -1,25 +1,34 @@
 use std::path::PathBuf;
 use std::sync::Arc;
-use clap::Parser;
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::App;
+use crate::cli::{load_config, PathArg};
 use crate::cli::config::TorrentClientConfig;
-use crate::cli::load_config;
 use crate::client::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 use crate::graphql::GraphqlServer;
 use crate::store::redb::RedbStore;
 
-#[derive(Debug, Parser, serde::Serialize)]
+#[derive(Debug, serde::Serialize, clap::Parser)]
 pub struct StartArgs {
-    /// Server listen address
+    #[arg(long, value_parser = humantime::parse_duration)]
+    pub poll_interval: Option<Duration>,
     #[arg(long)]
-    pub server_listen_addr: Option<String>,
-
-    /// Store path
+    pub download_dir: Option<PathArg>,
     #[arg(long)]
-    pub store_path: Option<String>,
+    pub listen_addr: Option<String>,
+    #[arg(long)]
+    pub max_page_size: Option<usize>,
+    #[arg(long)]
+    pub store_path: Option<PathArg>,
+    #[arg(long)]
+    pub qb_host: Option<String>,
+    #[arg(long)]
+    pub qb_username: Option<String>,
+    #[arg(long)]
+    pub qb_password: Option<String>,
 }
 
 pub async fn run(home: &PathBuf, args: StartArgs) {
@@ -32,9 +41,11 @@ pub async fn run(home: &PathBuf, args: StartArgs) {
     };
 
     tracing::info!(listen_addr = %cfg.server.listen_addr, "Server listen address");
-    tracing::info!(store_path = %cfg.store.path, "Store path");
 
-    let repo = match RedbStore::new(cfg.store.resolve_path(home)) {
+    let store_path = cfg.store.resolve_path(home);
+    tracing::info!(store_path = %store_path.display(), "Store path");
+
+    let repo = match RedbStore::new(store_path) {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to open repository: {e}");

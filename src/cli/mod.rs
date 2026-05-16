@@ -25,7 +25,7 @@ pub struct Cli {
     pub log_level: Option<LogLevel>,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PathArg(pub std::path::PathBuf);
 
 impl Display for PathArg {

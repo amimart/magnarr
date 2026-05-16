@@ -3,7 +3,8 @@ use std::time::Duration;
 
 use super::{PathArg, StartArgs};
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Default, Debug, Clone, serde::Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub app: AppConfig,
     pub server: ServerConfig,
@@ -12,13 +13,13 @@ pub struct Config {
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     /// How often the app polls the torrent client for status updates.
     /// Accepts humantime strings: "30s", "1m", "5 minutes", etc.
-    #[serde(with = "humantime_serde", default = "default_poll_interval")]
+    #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
     /// Directory where the torrent client saves completed downloads.
-    #[serde(default = "default_download_dir")]
     pub download_dir: PathArg,
 }
 
@@ -28,12 +29,13 @@ impl AppConfig {
     }
 }
 
-fn default_poll_interval() -> Duration {
-    Duration::from_secs(30)
-}
-
-fn default_download_dir() -> PathArg {
-    PathArg(PathBuf::from("./download"))
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(30),
+            download_dir: PathArg(PathBuf::from("./download")),
+        }
+    }
 }
 
 /// Discriminated union of supported torrent clients.
@@ -53,25 +55,31 @@ pub enum TorrentClientConfig {
     Qbittorrent(QbittorrentConfig),
 }
 
+impl Default for TorrentClientConfig {
+    fn default() -> Self {
+        Self::Qbittorrent(QbittorrentConfig::default())
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
 pub struct ServerConfig {
-    #[serde(default = "default_server_listen_addr")]
     pub listen_addr: String,
-    #[serde(default = "default_server_max_page_size")]
     pub max_page_size: usize,
 }
 
-fn default_server_listen_addr() -> String {
-    "http://localhost:9393".to_string()
-}
-
-fn default_server_max_page_size() -> usize {
-    100
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            listen_addr: "http://localhost:9393".to_string(),
+            max_page_size: 100,
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
 pub struct StoreConfig {
-    #[serde(default = "default_store_path")]
     pub path: PathArg,
 }
 
@@ -81,38 +89,45 @@ impl StoreConfig {
     }
 }
 
-fn default_store_path() -> PathArg {
-    PathArg(PathBuf::from("./data/magnarr.redb"))
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self {
+            path: PathArg(PathBuf::from("./data/magnarr.redb"))
+        }
+    }
 }
 
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(default)]
 pub struct QbittorrentConfig {
-    #[serde(default = "default_qb_host")]
     pub host: String,
-    #[serde(default = "default_qb_username")]
     pub username: String,
-    #[serde(default = "default_qb_password")]
     pub password: String,
 }
 
-fn default_qb_host() -> String {
-    "http://localhost:8080".to_owned()
-}
-
-fn default_qb_username() -> String {
-    "admin".to_owned()
-}
-
-fn default_qb_password() -> String {
-    "adminadmin".to_owned()
+impl Default for QbittorrentConfig {
+    fn default() -> Self {
+        Self {
+            host: "http://localhost:8080".to_string(),
+            username: "admin".to_string(),
+            password: "adminadmin".to_string(),
+        }
+    }
 }
 
 /// Load config respecting precedence: defaults < file < env vars < CLI args.
 pub fn load_config(home: &PathBuf, args: StartArgs) -> Result<Config, config::ConfigError> {
     config::Config::builder()
-        .add_source(config::File::from(home.join("config.yaml")))
+        .add_source(config::File::from(home.join("config.yaml")).required(false))
         .add_source(config::Environment::with_prefix("MAGNARR").separator("_"))
-        .add_source(config::Config::try_from(&args)?)
+        .set_override_option("app.poll_interval", args.poll_interval.map(|d| humantime::format_duration(d).to_string()))?
+        .set_override_option("app.download_dir", args.download_dir.map(|d| d.to_str().map(|s| s.to_owned())).flatten())?
+        .set_override_option("server.listen_addr", args.listen_addr)?
+        .set_override_option("server.max_page_size", args.max_page_size.map(|m| m as u64))?
+        .set_override_option("store.path", args.store_path.map(|d| d.to_str().map(|s| s.to_owned())).flatten())?
+        .set_override_option("torrent_client.qbittorrent_host", args.qb_host)?
+        .set_override_option("torrent_client.qbittorrent_username", args.qb_username)?
+        .set_override_option("torrent_client.qbittorrent_password", args.qb_password)?
         .build()?
         .try_deserialize::<Config>()
 }
