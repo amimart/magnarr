@@ -10,7 +10,10 @@ use std::ops::Deref;
 use crate::cli::start::StartArgs;
 
 #[derive(Debug, Parser)]
-#[command(name = "magnarr", about = "Magnet-based torrent download orchestrator.")]
+#[command(
+    name = "magnarr",
+    about = "Magnet-based torrent download orchestrator."
+)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
