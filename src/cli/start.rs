@@ -5,28 +5,36 @@ use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::App;
-use crate::cli::config::TorrentClientConfig;
-use crate::cli::{load_config, PathArg};
+use crate::cli::config::{load_config, TorrentClientConfig};
+use crate::cli::PathArg;
 use crate::client::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 use crate::graphql::GraphqlServer;
 use crate::store::redb::RedbStore;
 
-#[derive(Debug, serde::Serialize, clap::Parser)]
+#[derive(Default, Debug, serde::Serialize, clap::Parser)]
 pub struct StartArgs {
+    /// How often Magnarr polls the torrent client for download updates.
     #[arg(long, value_parser = humantime::parse_duration)]
     pub poll_interval: Option<Duration>,
+    /// The directory where completed downloads are read from for imports.
     #[arg(long)]
     pub download_dir: Option<PathArg>,
+    /// The HTTP listen address of the GraphQL server.
     #[arg(long)]
     pub listen_addr: Option<String>,
+    /// The maximum page size accepted by the GraphQL API.
     #[arg(long)]
     pub max_page_size: Option<usize>,
+    /// The path to the store file.
     #[arg(long)]
     pub store_path: Option<PathArg>,
+    /// The qBittorrent base URL.
     #[arg(long)]
     pub qb_host: Option<String>,
+    /// The qBittorrent username.
     #[arg(long)]
     pub qb_username: Option<String>,
+    /// The qBittorrent password.
     #[arg(long)]
     pub qb_password: Option<String>,
 }
