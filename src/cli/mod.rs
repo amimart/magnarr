@@ -1,4 +1,4 @@
-pub mod config;
+mod config;
 mod start;
 mod version;
 
@@ -6,14 +6,24 @@ use std::fmt::{Debug, Display};
 use std::ops::Deref;
 use clap::{Parser, Subcommand};
 
-pub use config::{load_config, Config, ConfigError};
+pub use config::Config;
+use config::load_config;
+use crate::cli::start::StartArgs;
 
 #[derive(Debug, Parser)]
-#[command(name = "magnarr", about = "Magnarr download orchestrator")]
+#[command(name = "magnarr", about = "Magnet-based torrent download orchestrator")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
+    /// Path to the Magnarr home directory.
+    #[arg(long, env = "MAGNARR_HOME", default_value = "~/.magnarr")]
+    pub home: PathArg,
+
+    /// Logging level (trace, debug, info, warn, error), defaults to info. Can also be tuned with RUST_LOG env var.
+    #[arg(long)]
+    pub log_level: Option<LogLevel>,
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct PathArg(pub std::path::PathBuf);
@@ -69,37 +79,30 @@ pub enum Command {
     Version,
 }
 
-#[derive(Debug, Parser)]
-pub struct StartArgs {
-    /// Path to the config file
-    #[arg(long, default_value = "config.yaml")]
-    pub config: String,
-
-    /// Server listen address
-    #[arg(long)]
-    pub server_listen_addr: Option<String>,
-
-    /// Store path
-    #[arg(long)]
-    pub store_path: Option<String>,
-}
-
 pub fn run() {
+    let cli = Cli::parse();
+    init_tracing(cli.log_level);
+
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to build tokio runtime")
-        .block_on(async {
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-                )
-                .init();
-
-            match Cli::parse().command {
-                Command::Start(args) => start::run(args).await,
+        .block_on(async move {
+            match cli.command {
+                Command::Start(args) => start::run(&cli.home, args).await,
                 Command::Version => version::run(),
             }
         });
+}
+
+fn init_tracing(lvl: Option<LogLevel>) {
+    let filter = match lvl {
+        Some(l) => tracing_subscriber::EnvFilter::new(l),
+        None => tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+    };
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .init();
 }
