@@ -6,7 +6,7 @@ server:
 store:
   path: /app/data/magnarr.redb
 torrent_client:
-  kind: qbittorrent
-  host: http://qbittorrent:8080
-  username: admin
-  password: adminadmin
+  qbittorrent:
+    host: http://qbittorrent:8080
+    username: admin
+    password: adminadmin

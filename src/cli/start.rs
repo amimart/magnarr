@@ -1,17 +1,46 @@
+use std::path::Path;
 use std::sync::Arc;
-
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::App;
-use crate::cli::config::TorrentClientConfig;
-use crate::cli::{load_config, StartArgs};
+use crate::cli::config::{load_config, TorrentClientConfig};
+use crate::cli::PathArg;
 use crate::client::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 use crate::graphql::GraphqlServer;
 use crate::store::redb::RedbStore;
 
-pub async fn run(args: StartArgs) {
-    let cfg = match load_config(args) {
+#[derive(Default, Debug, serde::Serialize, clap::Parser)]
+pub struct StartArgs {
+    /// How often Magnarr polls the torrent client for download updates.
+    #[arg(long, value_parser = humantime::parse_duration)]
+    pub poll_interval: Option<Duration>,
+    /// The directory where completed downloads are read from for imports.
+    #[arg(long)]
+    pub download_dir: Option<PathArg>,
+    /// The HTTP listen address of the GraphQL server.
+    #[arg(long)]
+    pub listen_addr: Option<String>,
+    /// The maximum page size accepted by the GraphQL API.
+    #[arg(long)]
+    pub max_page_size: Option<usize>,
+    /// The path to the store file.
+    #[arg(long)]
+    pub store_path: Option<PathArg>,
+    /// The qBittorrent base URL.
+    #[arg(long)]
+    pub qb_host: Option<String>,
+    /// The qBittorrent username.
+    #[arg(long)]
+    pub qb_username: Option<String>,
+    /// The qBittorrent password.
+    #[arg(long)]
+    pub qb_password: Option<String>,
+}
+
+pub async fn run(home: &Path, args: StartArgs) {
+    let cfg = match load_config(home, args) {
         Ok(c) => c,
         Err(e) => {
             tracing::error!("Failed to load config: {e}");
@@ -20,9 +49,11 @@ pub async fn run(args: StartArgs) {
     };
 
     tracing::info!(listen_addr = %cfg.server.listen_addr, "Server listen address");
-    tracing::info!(store_path = %cfg.store.path, "Store path");
 
-    let repo = match RedbStore::new(&cfg.store.path) {
+    let store_path = cfg.store.resolve_path(home);
+    tracing::info!(store_path = %store_path.display(), "Store path");
+
+    let repo = match RedbStore::new(store_path) {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to open repository: {e}");
@@ -45,7 +76,7 @@ pub async fn run(args: StartArgs) {
         Arc::new(repo),
         torrent_client,
         cfg.app.poll_interval,
-        cfg.app.download_dir.into(),
+        cfg.app.resolve_download_dir(home),
     );
     app.start(token.clone());
 

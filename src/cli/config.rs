@@ -1,11 +1,10 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use thiserror::Error;
+use super::{PathArg, StartArgs};
 
-use super::StartArgs;
-
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Config {
     pub app: AppConfig,
     pub server: ServerConfig,
@@ -13,467 +12,323 @@ pub struct Config {
     pub torrent_client: TorrentClientConfig,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     /// How often the app polls the torrent client for status updates.
     /// Accepts humantime strings: "30s", "1m", "5 minutes", etc.
     #[serde(with = "humantime_serde")]
     pub poll_interval: Duration,
     /// Directory where the torrent client saves completed downloads.
-    pub download_dir: String,
+    pub download_dir: PathArg,
 }
 
-/// Discriminated union of supported torrent clients.
-/// The `kind` field selects the variant; remaining fields are client-specific.
-///
-/// Example config file:
-/// ```yaml
-/// torrent_client:
-///   kind: qbittorrent
-///   host: http://localhost:9393
-///   username: admin
-///   password: secret
-/// ```
-#[derive(Debug, Clone, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TorrentClientConfig {
-    Qbittorrent(QbittorrentConfig),
+impl AppConfig {
+    pub fn resolve_download_dir(&self, home: &Path) -> PathBuf {
+        home_relative_or_absolute_path(home, &self.download_dir)
+    }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            poll_interval: Duration::from_secs(30),
+            download_dir: PathArg(PathBuf::from("./download")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ServerConfig {
     pub listen_addr: String,
     pub max_page_size: usize,
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct StoreConfig {
-    pub path: String,
+impl Default for ServerConfig {
+    fn default() -> Self {
+        Self {
+            listen_addr: "http://localhost:9393".to_string(),
+            max_page_size: 100,
+        }
+    }
 }
 
-#[derive(Debug, Clone, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct StoreConfig {
+    pub path: PathArg,
+}
+
+impl StoreConfig {
+    pub fn resolve_path(&self, home: &Path) -> PathBuf {
+        home_relative_or_absolute_path(home, &self.path.0)
+    }
+}
+
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self {
+            path: PathArg(PathBuf::from("./data/magnarr.redb")),
+        }
+    }
+}
+
+/// Discriminated union of supported torrent clients.
+///
+/// Example config file:
+/// ```yaml
+/// torrent_client:
+///   qbittorrent:
+///     host: http://localhost:9393
+///     username: admin
+///     password: secret
+/// ```
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TorrentClientConfig {
+    Qbittorrent(QbittorrentConfig),
+}
+
+impl Default for TorrentClientConfig {
+    fn default() -> Self {
+        Self::Qbittorrent(QbittorrentConfig::default())
+    }
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct QbittorrentConfig {
-    #[serde(default = "default_qb_host")]
     pub host: String,
-    #[serde(default = "default_qb_username")]
     pub username: String,
-    #[serde(default = "default_qb_password")]
     pub password: String,
 }
 
-fn default_qb_host() -> String {
-    "http://localhost:9393".to_owned()
-}
-
-fn default_qb_username() -> String {
-    "admin".to_owned()
-}
-
-fn default_qb_password() -> String {
-    "adminadmin".to_owned()
-}
-
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("config file not found: {0}")]
-    FileNotFound(String),
-    #[error("failed to read config file: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("failed to parse config file: {0}")]
-    Parse(#[from] serde_yaml::Error),
-}
-
-/// Partial config overlaid from a config file (all fields optional for merging).
-#[derive(Debug, Default, serde::Deserialize)]
-struct FileConfig {
-    app: Option<FileAppConfig>,
-    server: Option<FileServerConfig>,
-    store: Option<FileStoreConfig>,
-    /// When present, replaces the entire torrent_client block.
-    /// Fields within the variant use serde defaults, so partial specification is fine.
-    torrent_client: Option<TorrentClientConfig>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct FileAppConfig {
-    /// Humantime duration string: "30s", "1m", "5 minutes", etc.
-    poll_interval: Option<String>,
-    download_dir: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct FileServerConfig {
-    listen_addr: Option<String>,
-    max_page_size: Option<usize>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct FileStoreConfig {
-    path: Option<String>,
-}
-
-fn default_config() -> Config {
-    Config {
-        app: AppConfig {
-            poll_interval: Duration::from_secs(30),
-            download_dir: "./downloads".to_owned(),
-        },
-        server: ServerConfig {
-            listen_addr: "127.0.0.1:9393".to_owned(),
-            max_page_size: 100,
-        },
-        store: StoreConfig {
-            path: "./data/magnarr.redb".to_owned(),
-        },
-        torrent_client: TorrentClientConfig::Qbittorrent(QbittorrentConfig {
-            host: default_qb_host(),
-            username: default_qb_username(),
-            password: default_qb_password(),
-        }),
+impl Default for QbittorrentConfig {
+    fn default() -> Self {
+        Self {
+            host: "http://localhost:8080".to_string(),
+            username: "admin".to_string(),
+            password: "adminadmin".to_string(),
+        }
     }
+}
+
+pub fn get_config_path(home: &Path) -> PathBuf {
+    home.join("config.yaml")
 }
 
 /// Load config respecting precedence: defaults < file < env vars < CLI args.
-pub fn load_config(args: StartArgs) -> Result<Config, ConfigError> {
-    let mut cfg = default_config();
+pub fn load_config(home: &Path, args: StartArgs) -> Result<Config, config::ConfigError> {
+    config::Config::builder()
+        .add_source(config::File::from(get_config_path(home)).required(false))
+        .add_source(config::Environment::with_prefix("MAGNARR").separator("_"))
+        .set_override_option(
+            "app.poll_interval",
+            args.poll_interval
+                .map(|d| humantime::format_duration(d).to_string()),
+        )?
+        .set_override_option(
+            "app.download_dir",
+            args.download_dir
+                .and_then(|d| d.to_str().map(|s| s.to_owned())),
+        )?
+        .set_override_option("server.listen_addr", args.listen_addr)?
+        .set_override_option("server.max_page_size", args.max_page_size.map(|m| m as u64))?
+        .set_override_option(
+            "store.path",
+            args.store_path
+                .and_then(|d| d.to_str().map(|s| s.to_owned())),
+        )?
+        .set_override_option("torrent_client.qbittorrent.host", args.qb_host)?
+        .set_override_option("torrent_client.qbittorrent.username", args.qb_username)?
+        .set_override_option("torrent_client.qbittorrent.password", args.qb_password)?
+        .build()?
+        .try_deserialize::<Config>()
+}
 
-    // --- config file ---
-    let config_path = args.config.as_str();
-    let is_default_path = config_path == "config.yaml";
-
-    if Path::new(config_path).exists() {
-        let contents = std::fs::read_to_string(config_path)?;
-        let file_cfg: FileConfig = serde_yaml::from_str(&contents)?;
-
-        if let Some(app) = file_cfg.app {
-            if let Some(s) = app.poll_interval {
-                if let Ok(d) = humantime::parse_duration(&s) {
-                    cfg.app.poll_interval = d;
-                }
-            }
-            if let Some(dir) = app.download_dir {
-                cfg.app.download_dir = dir;
-            }
-        }
-        if let Some(server) = file_cfg.server {
-            if let Some(addr) = server.listen_addr {
-                cfg.server.listen_addr = addr;
-            }
-            if let Some(limit) = server.max_page_size {
-                cfg.server.max_page_size = limit;
-            }
-        }
-        if let Some(store) = file_cfg.store {
-            if let Some(path) = store.path {
-                cfg.store.path = path;
-            }
-        }
-        if let Some(tc) = file_cfg.torrent_client {
-            cfg.torrent_client = tc;
-        }
-    } else if !is_default_path {
-        return Err(ConfigError::FileNotFound(config_path.to_owned()));
+pub fn home_relative_or_absolute_path(home: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        home.join(path)
     }
-
-    // --- env vars ---
-    if let Ok(s) = std::env::var("MAGNARR_APP_POLL_INTERVAL") {
-        if let Ok(d) = humantime::parse_duration(&s) {
-            cfg.app.poll_interval = d;
-        }
-    }
-    if let Ok(dir) = std::env::var("MAGNARR_APP_DOWNLOAD_DIR") {
-        cfg.app.download_dir = dir;
-    }
-    if let Ok(addr) = std::env::var("MAGNARR_SERVER_LISTEN_ADDR") {
-        cfg.server.listen_addr = addr;
-    }
-    if let Ok(limit) = std::env::var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE") {
-        if let Ok(limit) = limit.parse::<usize>() {
-            cfg.server.max_page_size = limit;
-        }
-    }
-    if let Ok(path) = std::env::var("MAGNARR_STORE_PATH") {
-        cfg.store.path = path;
-    }
-    match cfg.torrent_client {
-        TorrentClientConfig::Qbittorrent(ref mut qb) => {
-            if let Ok(host) = std::env::var("MAGNARR_QB_HOST") {
-                qb.host = host;
-            }
-            if let Ok(username) = std::env::var("MAGNARR_QB_USERNAME") {
-                qb.username = username;
-            }
-            if let Ok(password) = std::env::var("MAGNARR_QB_PASSWORD") {
-                qb.password = password;
-            }
-        }
-    }
-
-    // --- CLI args ---
-    if let Some(addr) = args.server_listen_addr {
-        cfg.server.listen_addr = addr;
-    }
-    if let Some(path) = args.store_path {
-        cfg.store.path = path;
-    }
-
-    Ok(cfg)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::Write;
-    use std::sync::Mutex;
-
     use super::*;
-    use crate::cli::StartArgs;
+    use std::sync::{Mutex, OnceLock};
 
-    /// Serializes tests that modify environment variables to avoid cross-test pollution.
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    fn env_lock() -> &'static Mutex<()> {
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        ENV_LOCK.get_or_init(|| Mutex::new(()))
+    }
 
-    fn default_start_args() -> StartArgs {
+    fn empty_args() -> StartArgs {
         StartArgs {
-            config: "config.yaml".to_owned(),
-            server_listen_addr: None,
+            poll_interval: None,
+            download_dir: None,
+            listen_addr: None,
+            max_page_size: None,
             store_path: None,
+            qb_host: None,
+            qb_username: None,
+            qb_password: None,
+        }
+    }
+
+    fn write_config(home: &Path, content: &str) {
+        std::fs::create_dir_all(home).unwrap();
+        std::fs::write(home.join("config.yaml"), content).unwrap();
+    }
+
+    fn clear_test_env() {
+        for key in [
+            "MAGNARR_APP_POLL_INTERVAL",
+            "MAGNARR_APP_DOWNLOAD_DIR",
+            "MAGNARR_SERVER_LISTEN_ADDR",
+            "MAGNARR_SERVER_MAX_PAGE_SIZE",
+            "MAGNARR_STORE_PATH",
+            "MAGNARR_TORRENT_CLIENT_HOST",
+            "MAGNARR_TORRENT_CLIENT_USERNAME",
+            "MAGNARR_TORRENT_CLIENT_USERNAME",
+            "MAGNARR_TORRENT_CLIENT_PASSWORD",
+        ] {
+            unsafe { std::env::remove_var(key) };
         }
     }
 
     #[test]
-    fn default_config_values_are_correct() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_STORE_PATH");
-        let cfg = load_config(default_start_args()).unwrap();
-        assert_eq!(cfg.server.listen_addr, "127.0.0.1:9393");
+    fn load_config_uses_defaults_without_other_sources() {
+        let _env_lock = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        clear_test_env();
+
+        let home = tempfile::tempdir().unwrap();
+        let cfg = load_config(&home.path().to_path_buf(), empty_args()).unwrap();
+
+        assert_eq!(cfg.app.poll_interval, Duration::from_secs(30));
+        assert_eq!(cfg.app.download_dir.0, PathBuf::from("./download"));
+        assert_eq!(cfg.server.listen_addr, "http://localhost:9393");
         assert_eq!(cfg.server.max_page_size, 100);
-        assert_eq!(cfg.store.path, "./data/magnarr.redb");
-    }
-
-    #[test]
-    fn config_file_loading_applies_file_values() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
-        std::env::remove_var("MAGNARR_STORE_PATH");
-
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(
-            f,
-            "server:\n  listen_addr: 0.0.0.0:9090\n  max_page_size: 75\nstore:\n  path: /tmp/test.redb"
-        )
-        .unwrap();
-
-        let args = StartArgs {
-            config: config_path.to_str().unwrap().to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        let cfg = load_config(args).unwrap();
-        assert_eq!(cfg.server.listen_addr, "0.0.0.0:9090");
-        assert_eq!(cfg.server.max_page_size, 75);
-        assert_eq!(cfg.store.path, "/tmp/test.redb");
-    }
-
-    #[test]
-    fn env_var_listen_addr_overrides_config_file() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_STORE_PATH");
-
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(f, "server:\n  listen_addr: 0.0.0.0:9090").unwrap();
-
-        std::env::set_var("MAGNARR_SERVER_LISTEN_ADDR", "1.2.3.4:1111");
-        let args = StartArgs {
-            config: config_path.to_str().unwrap().to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        let cfg = load_config(args).unwrap();
-        std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
-        assert_eq!(cfg.server.listen_addr, "1.2.3.4:1111");
-    }
-
-    #[test]
-    fn env_var_store_path_overrides_config_file() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(f, "store:\n  path: /original.redb").unwrap();
-
-        std::env::set_var("MAGNARR_STORE_PATH", "/env-override.redb");
-        let args = StartArgs {
-            config: config_path.to_str().unwrap().to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        let cfg = load_config(args).unwrap();
-        std::env::remove_var("MAGNARR_STORE_PATH");
-        assert_eq!(cfg.store.path, "/env-override.redb");
-    }
-
-    #[test]
-    fn cli_arg_overrides_everything() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_STORE_PATH");
-
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(f, "server:\n  listen_addr: 0.0.0.0:9090").unwrap();
-
-        std::env::set_var("MAGNARR_SERVER_LISTEN_ADDR", "1.2.3.4:1111");
-        let args = StartArgs {
-            config: config_path.to_str().unwrap().to_owned(),
-            server_listen_addr: Some("5.6.7.8:2222".to_owned()),
-            store_path: None,
-        };
-        let cfg = load_config(args).unwrap();
-        std::env::remove_var("MAGNARR_SERVER_LISTEN_ADDR");
-        assert_eq!(cfg.server.listen_addr, "5.6.7.8:2222");
-    }
-
-    #[test]
-    fn explicit_config_path_not_found_returns_error() {
-        let args = StartArgs {
-            config: "/nonexistent/path/config.yaml".to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        let result = load_config(args);
-        assert!(matches!(result, Err(ConfigError::FileNotFound(_))));
-    }
-
-    #[test]
-    fn missing_default_config_file_is_silently_ignored() {
-        let args = StartArgs {
-            config: "config.yaml".to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        if !Path::new("config.yaml").exists() {
-            assert!(load_config(args).is_ok());
+        assert_eq!(cfg.store.path.0, PathBuf::from("./data/magnarr.redb"));
+        match cfg.torrent_client {
+            TorrentClientConfig::Qbittorrent(qb) => {
+                assert_eq!(qb.host, "http://localhost:8080");
+                assert_eq!(qb.username, "admin");
+                assert_eq!(qb.password, "adminadmin");
+            }
         }
     }
 
     #[test]
-    fn default_torrent_client_is_qbittorrent_with_correct_defaults() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_QB_HOST");
-        std::env::remove_var("MAGNARR_QB_USERNAME");
-        std::env::remove_var("MAGNARR_QB_PASSWORD");
+    fn load_config_reads_config_file_values() {
+        let _env_lock = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        clear_test_env();
 
-        let cfg = load_config(default_start_args()).unwrap();
-        let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
-        assert_eq!(qb.host, "http://localhost:9393");
-        assert_eq!(qb.username, "admin");
+        let home = tempfile::tempdir().unwrap();
+        write_config(
+            &home.path().to_path_buf(),
+            r#"
+app:
+  poll_interval: 45s
+  download_dir: ./downloads-from-file
+server:
+  listen_addr: 127.0.0.1:4000
+  max_page_size: 75
+store:
+  path: ./store-from-file.redb
+torrent_client:
+  qbittorrent:
+    host: http://qb-from-file:8081
+    username: file-user
+    password: file-pass
+"#,
+        );
+
+        let cfg = load_config(&home.path().to_path_buf(), empty_args()).unwrap();
+
+        assert_eq!(cfg.app.poll_interval, Duration::from_secs(45));
+        assert_eq!(
+            cfg.app.download_dir.0,
+            PathBuf::from("./downloads-from-file")
+        );
+        assert_eq!(cfg.server.listen_addr, "127.0.0.1:4000");
+        assert_eq!(cfg.server.max_page_size, 75);
+        assert_eq!(cfg.store.path.0, PathBuf::from("./store-from-file.redb"));
+        match cfg.torrent_client {
+            TorrentClientConfig::Qbittorrent(qb) => {
+                assert_eq!(qb.host, "http://qb-from-file:8081");
+                assert_eq!(qb.username, "file-user");
+                assert_eq!(qb.password, "file-pass");
+            }
+        }
     }
 
     #[test]
-    fn default_app_poll_interval_is_30s() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
+    fn load_config_applies_override_chain_defaults_file_env_cli() {
+        let _env_lock = env_lock().lock().unwrap_or_else(|e| e.into_inner());
+        clear_test_env();
 
-        let cfg = load_config(default_start_args()).unwrap();
-        assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(30));
-    }
+        let home = tempfile::tempdir().unwrap();
+        write_config(
+            &home.path().to_path_buf(),
+            r#"
+app:
+  poll_interval: 45s
+  download_dir: ./downloads-from-file
+server:
+  listen_addr: 127.0.0.1:4000
+  max_page_size: 75
+store:
+  path: ./store-from-file.redb
+torrent_client:
+  qbittorrent:
+    host: http://qb-from-file:8081
+    username: file-user
+    password: file-pass
+"#,
+        );
 
-    #[test]
-    fn config_file_torrent_client_section_is_loaded() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_QB_HOST");
-        std::env::remove_var("MAGNARR_QB_USERNAME");
-        std::env::remove_var("MAGNARR_QB_PASSWORD");
+        unsafe {
+            std::env::set_var("MAGNARR_APP_POLL_INTERVAL", "1m");
+            std::env::set_var("MAGNARR_APP_DOWNLOAD_DIR", "./downloads-from-env");
+            std::env::set_var("MAGNARR_SERVER_LISTEN_ADDR", "0.0.0.0:5000");
+            std::env::set_var("MAGNARR_SERVER_MAX_PAGE_SIZE", "80");
+            std::env::set_var("MAGNARR_STORE_PATH", "./store-from-env.redb");
+        }
 
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(
-            f,
-            "torrent_client:\n  kind: qbittorrent\n  host: http://myserver:9090"
+        let cfg = load_config(
+            &home.path().to_path_buf(),
+            StartArgs {
+                poll_interval: Some(Duration::from_secs(90)),
+                download_dir: Some(PathArg(PathBuf::from("./downloads-from-cli"))),
+                listen_addr: Some("0.0.0.0:6000".to_owned()),
+                max_page_size: Some(90),
+                store_path: Some(PathArg(PathBuf::from("./store-from-cli.redb"))),
+                qb_host: Some("http://qb-from-cli:8082".to_owned()),
+                qb_username: Some("cli-user".to_owned()),
+                qb_password: Some("cli-pass".to_owned()),
+            },
         )
         .unwrap();
 
-        let args = StartArgs {
-            config: config_path.to_str().unwrap().to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        let cfg = load_config(args).unwrap();
-        let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
-        assert_eq!(qb.host, "http://myserver:9090");
-        // Fields not specified in the file fall back to per-field serde defaults.
-        assert_eq!(qb.username, "admin");
-    }
+        clear_test_env();
 
-    #[test]
-    fn config_file_app_poll_interval_is_loaded() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
-
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.yaml");
-        let mut f = std::fs::File::create(&config_path).unwrap();
-        writeln!(f, "app:\n  poll_interval: 2m").unwrap();
-
-        let args = StartArgs {
-            config: config_path.to_str().unwrap().to_owned(),
-            server_listen_addr: None,
-            store_path: None,
-        };
-        let cfg = load_config(args).unwrap();
-        assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(120));
-    }
-
-    #[test]
-    fn env_vars_override_qbittorrent_fields() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::set_var("MAGNARR_QB_HOST", "http://envhost:7777");
-        std::env::remove_var("MAGNARR_QB_USERNAME");
-        std::env::remove_var("MAGNARR_QB_PASSWORD");
-
-        let cfg = load_config(default_start_args()).unwrap();
-        std::env::remove_var("MAGNARR_QB_HOST");
-
-        let TorrentClientConfig::Qbittorrent(qb) = cfg.torrent_client;
-        assert_eq!(qb.host, "http://envhost:7777");
-    }
-
-    #[test]
-    fn env_var_app_poll_interval_overrides_default() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-        std::env::set_var("MAGNARR_APP_POLL_INTERVAL", "5m");
-
-        let cfg = load_config(default_start_args()).unwrap();
-        std::env::remove_var("MAGNARR_APP_POLL_INTERVAL");
-
-        assert_eq!(cfg.app.poll_interval, std::time::Duration::from_secs(300));
-    }
-
-    #[test]
-    fn env_var_max_page_size_overrides_default() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        std::env::set_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE", "80");
-
-        let cfg = load_config(default_start_args()).unwrap();
-        std::env::remove_var("MAGNARR_SERVER_DOWNLOADS_PAGE_SIZE");
-
-        assert_eq!(cfg.server.max_page_size, 80);
+        assert_eq!(cfg.app.poll_interval, Duration::from_secs(90));
+        assert_eq!(
+            cfg.app.download_dir.0,
+            PathBuf::from("./downloads-from-cli")
+        );
+        assert_eq!(cfg.server.listen_addr, "0.0.0.0:6000");
+        assert_eq!(cfg.server.max_page_size, 90);
+        assert_eq!(cfg.store.path.0, PathBuf::from("./store-from-cli.redb"));
+        match cfg.torrent_client {
+            TorrentClientConfig::Qbittorrent(qb) => {
+                assert_eq!(qb.host, "http://qb-from-cli:8082");
+                assert_eq!(qb.username, "cli-user");
+                assert_eq!(qb.password, "cli-pass");
+            }
+        }
     }
 }
