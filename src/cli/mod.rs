@@ -2,13 +2,13 @@ mod config;
 mod start;
 mod version;
 
+use clap::{Parser, Subcommand};
 use std::fmt::{Debug, Display};
 use std::ops::Deref;
-use clap::{Parser, Subcommand};
 
-pub use config::Config;
-use config::load_config;
 use crate::cli::start::StartArgs;
+use config::load_config;
+pub use config::Config;
 
 #[derive(Debug, Parser)]
 #[command(name = "magnarr", about = "Magnet-based torrent download orchestrator")]
@@ -31,7 +31,8 @@ pub struct PathArg(pub std::path::PathBuf);
 impl Display for PathArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
-    }}
+    }
+}
 
 impl Deref for PathArg {
     type Target = std::path::PathBuf;
@@ -102,7 +103,5 @@ fn init_tracing(lvl: Option<LogLevel>) {
             .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
     };
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 }

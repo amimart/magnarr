@@ -1,9 +1,9 @@
-use redb::{Database, ReadableTable, TableDefinition};
-use std::ops::{Bound, RangeBounds};
-use std::path::PathBuf;
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::store::iter::{RedbDownloadIndexIter, RedbIndexIter};
 use crate::types::{Download, DownloadStatus};
+use redb::{Database, ReadableTable, TableDefinition};
+use std::ops::{Bound, RangeBounds};
+use std::path::PathBuf;
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 /// Key: `{created_at}:{info_hash}`, value: info_hash. Enables ordered iteration across all downloads.

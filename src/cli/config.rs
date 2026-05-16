@@ -119,11 +119,23 @@ pub fn load_config(home: &Path, args: StartArgs) -> Result<Config, config::Confi
     config::Config::builder()
         .add_source(config::File::from(home.join("config.yaml")).required(false))
         .add_source(config::Environment::with_prefix("MAGNARR").separator("_"))
-        .set_override_option("app.poll_interval", args.poll_interval.map(|d| humantime::format_duration(d).to_string()))?
-        .set_override_option("app.download_dir", args.download_dir.map(|d| d.to_str().map(|s| s.to_owned())).flatten())?
+        .set_override_option(
+            "app.poll_interval",
+            args.poll_interval
+                .map(|d| humantime::format_duration(d).to_string()),
+        )?
+        .set_override_option(
+            "app.download_dir",
+            args.download_dir
+                .and_then(|d| d.to_str().map(|s| s.to_owned())),
+        )?
         .set_override_option("server.listen_addr", args.listen_addr)?
         .set_override_option("server.max_page_size", args.max_page_size.map(|m| m as u64))?
-        .set_override_option("store.path", args.store_path.map(|d| d.to_str().map(|s| s.to_owned())).flatten())?
+        .set_override_option(
+            "store.path",
+            args.store_path
+                .and_then(|d| d.to_str().map(|s| s.to_owned())),
+        )?
         .set_override_option("torrent_client.qbittorrent.host", args.qb_host)?
         .set_override_option("torrent_client.qbittorrent.username", args.qb_username)?
         .set_override_option("torrent_client.qbittorrent.password", args.qb_password)?
