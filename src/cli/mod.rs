@@ -1,4 +1,5 @@
 mod config;
+mod init;
 mod start;
 mod version;
 
@@ -7,11 +8,9 @@ use std::fmt::{Debug, Display};
 use std::ops::Deref;
 
 use crate::cli::start::StartArgs;
-use config::load_config;
-pub use config::Config;
 
 #[derive(Debug, Parser)]
-#[command(name = "magnarr", about = "Magnet-based torrent download orchestrator")]
+#[command(name = "magnarr", about = "Magnet-based torrent download orchestrator.")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -74,9 +73,11 @@ impl AsRef<str> for LogLevel {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Start the magnarr server
+    /// Start the Magnarr server.
     Start(StartArgs),
-    /// Display version and build information
+    /// Initialize the app home directory.
+    Init,
+    /// Display version and build information.
     Version,
 }
 
@@ -91,6 +92,7 @@ pub fn run() {
         .block_on(async move {
             match cli.command {
                 Command::Start(args) => start::run(&cli.home, args).await,
+                Command::Init => init::run(&cli.home),
                 Command::Version => version::run(),
             }
         });
