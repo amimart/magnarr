@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::{PathArg, StartArgs};
@@ -24,7 +24,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn resolve_download_dir(&self, home: &PathBuf) -> PathBuf {
+    pub fn resolve_download_dir(&self, home: &Path) -> PathBuf {
         home_relative_or_absolute_path(home, &self.download_dir)
     }
 }
@@ -39,18 +39,17 @@ impl Default for AppConfig {
 }
 
 /// Discriminated union of supported torrent clients.
-/// The `kind` field selects the variant; remaining fields are client-specific.
 ///
 /// Example config file:
 /// ```yaml
 /// torrent_client:
-///   kind: qbittorrent
-///   host: http://localhost:9393
-///   username: admin
-///   password: secret
+///   qbittorrent:
+///     host: http://localhost:9393
+///     username: admin
+///     password: secret
 /// ```
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
 pub enum TorrentClientConfig {
     Qbittorrent(QbittorrentConfig),
 }
@@ -84,7 +83,7 @@ pub struct StoreConfig {
 }
 
 impl StoreConfig {
-    pub fn resolve_path(&self, home: &PathBuf) -> PathBuf {
+    pub fn resolve_path(&self, home: &Path) -> PathBuf {
         home_relative_or_absolute_path(home, &self.path.0)
     }
 }
@@ -92,7 +91,7 @@ impl StoreConfig {
 impl Default for StoreConfig {
     fn default() -> Self {
         Self {
-            path: PathArg(PathBuf::from("./data/magnarr.redb"))
+            path: PathArg(PathBuf::from("./data/magnarr.redb")),
         }
     }
 }
@@ -116,7 +115,7 @@ impl Default for QbittorrentConfig {
 }
 
 /// Load config respecting precedence: defaults < file < env vars < CLI args.
-pub fn load_config(home: &PathBuf, args: StartArgs) -> Result<Config, config::ConfigError> {
+pub fn load_config(home: &Path, args: StartArgs) -> Result<Config, config::ConfigError> {
     config::Config::builder()
         .add_source(config::File::from(home.join("config.yaml")).required(false))
         .add_source(config::Environment::with_prefix("MAGNARR").separator("_"))
@@ -125,17 +124,17 @@ pub fn load_config(home: &PathBuf, args: StartArgs) -> Result<Config, config::Co
         .set_override_option("server.listen_addr", args.listen_addr)?
         .set_override_option("server.max_page_size", args.max_page_size.map(|m| m as u64))?
         .set_override_option("store.path", args.store_path.map(|d| d.to_str().map(|s| s.to_owned())).flatten())?
-        .set_override_option("torrent_client.qbittorrent_host", args.qb_host)?
-        .set_override_option("torrent_client.qbittorrent_username", args.qb_username)?
-        .set_override_option("torrent_client.qbittorrent_password", args.qb_password)?
+        .set_override_option("torrent_client.qbittorrent.host", args.qb_host)?
+        .set_override_option("torrent_client.qbittorrent.username", args.qb_username)?
+        .set_override_option("torrent_client.qbittorrent.password", args.qb_password)?
         .build()?
         .try_deserialize::<Config>()
 }
 
-pub fn home_relative_or_absolute_path(home: &PathBuf, path: &PathBuf) -> PathBuf {
+pub fn home_relative_or_absolute_path(home: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
-        path.clone()
+        path.to_path_buf()
     } else {
-        home.join(&path)
+        home.join(path)
     }
 }

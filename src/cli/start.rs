@@ -1,12 +1,12 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::App;
-use crate::cli::{load_config, PathArg};
 use crate::cli::config::TorrentClientConfig;
+use crate::cli::{load_config, PathArg};
 use crate::client::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 use crate::graphql::GraphqlServer;
 use crate::store::redb::RedbStore;
@@ -31,7 +31,7 @@ pub struct StartArgs {
     pub qb_password: Option<String>,
 }
 
-pub async fn run(home: &PathBuf, args: StartArgs) {
+pub async fn run(home: &Path, args: StartArgs) {
     let cfg = match load_config(home, args) {
         Ok(c) => c,
         Err(e) => {
