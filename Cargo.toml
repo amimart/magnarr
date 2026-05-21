@@ -39,7 +39,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 shellexpand = "3.1.2"
-config = "0.15.22"
+config = "0.15.23"
 
 [dev-dependencies]
 tempfile = "3"
