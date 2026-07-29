@@ -1,4 +1,4 @@
-use collette::{Cursor, Direction};
+use collette::Direction;
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
@@ -10,9 +10,9 @@ pub enum SortOrder {
     Desc,
 }
 
-impl Into<Direction> for SortOrder {
-    fn into(self) -> Direction {
-        match self {
+impl From<SortOrder> for Direction {
+    fn from(val: SortOrder) -> Self {
+        match val {
             SortOrder::Asc => Direction::LeftToRight,
             SortOrder::Desc => Direction::RightToLeft,
         }

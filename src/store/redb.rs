@@ -1,14 +1,16 @@
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::store::iter::DownloadIter;
 use crate::types::{Download, DownloadStatus};
-use std::path::PathBuf;
 use collette::backend::redb::RedbMultiStore;
-use collette::{impl_enum_key, Collection, Item, Index, Multi, Error, PrefixableScan, Cursor, Scan};
 use collette::index_registry::{Cons, Nil};
-use collette::iter::Entry;
+use collette::{
+    impl_enum_key, Collection, Cursor, Error, Index, Item, Multi, PrefixableScan, Scan,
+};
+use std::path::PathBuf;
 
 impl Item for Download {
-    type Key<'a> = &'a str
+    type Key<'a>
+        = &'a str
     where
         Self: 'a;
 
@@ -39,11 +41,13 @@ impl_enum_key!(DownloadStatus as u8 {
 struct CreatedAt;
 
 impl Index<Download> for CreatedAt {
-    type Key<'a> = (i64,)
+    type Key<'a>
+        = (i64,)
     where
         Download: 'a;
 
-    type Kind<'a> = Multi
+    type Kind<'a>
+        = Multi
     where
         Download: 'a;
 
@@ -57,11 +61,13 @@ impl Index<Download> for CreatedAt {
 struct StatusAndCreatedAt;
 
 impl Index<Download> for StatusAndCreatedAt {
-    type Key<'a> = (DownloadStatus, i64)
+    type Key<'a>
+        = (DownloadStatus, i64)
     where
         Download: 'a;
 
-    type Kind<'a> = Multi
+    type Kind<'a>
+        = Multi
     where
         Download: 'a;
 
@@ -85,13 +91,14 @@ impl RedbStore {
             }
         }
 
-        let db = RedbMultiStore::create(path).map_err(|e| RepositoryError::Storage(e.to_string()))?;
+        let db =
+            RedbMultiStore::create(path).map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
         Ok(Self {
             db: collette::collection::<Download, _>("downloads", db)
                 .with_index::<CreatedAt>()
                 .with_index::<StatusAndCreatedAt>()
-                .build()
+                .build(),
         })
     }
 }
@@ -115,11 +122,12 @@ impl DownloadRepository for RedbStore {
     }
 
     fn get(&self, info_hash: &str) -> Result<Download, RepositoryError> {
-        self.db.get(info_hash.to_owned())
+        self.db
+            .get(info_hash.to_owned())
             .map_err(RepositoryError::from)
             .and_then(|res| match res {
                 Some(download) => Ok(download),
-                None => Err(RepositoryError::NotFound)
+                None => Err(RepositoryError::NotFound),
             })
     }
 
@@ -132,55 +140,60 @@ impl DownloadRepository for RedbStore {
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
         let iter = match (status, from) {
             (Some(status), Some(from)) => {
-                let cursor = after.map(|c| {
-                    Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
-                }).unwrap_or(Cursor::None);
+                let cursor = after
+                    .map(|c| {
+                        Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
+                    })
+                    .unwrap_or(Cursor::None);
 
                 DownloadIter::IndexScan(
-                    self.db.index_scan(StatusAndCreatedAt)
+                    self.db
+                        .index_scan(StatusAndCreatedAt)
                         .map_err(|e| RepositoryError::Storage(e.to_string()))?
                         .prefix(status)
                         .range(from.timestamp_micros()..)
                         .direction(order.into())
                         .after(cursor)
-                        .iter()?
+                        .iter()?,
                 )
-            },
+            }
             (Some(status), None) => {
-                let cursor = after.map(|c| {
-                    Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
-                }).unwrap_or(Cursor::None);
+                let cursor = after
+                    .map(|c| {
+                        Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
+                    })
+                    .unwrap_or(Cursor::None);
 
                 DownloadIter::IndexScan(
-                    self.db.index_scan(StatusAndCreatedAt)
+                    self.db
+                        .index_scan(StatusAndCreatedAt)
                         .map_err(|e| RepositoryError::Storage(e.to_string()))?
                         .prefix(status)
                         .direction(order.into())
                         .after(cursor)
-                        .iter()?
+                        .iter()?,
                 )
-            },
+            }
             (None, Some(from)) => {
-                let cursor = after.map(|c| {
-                    Cursor::from_key((c.created_at.timestamp_micros(), c.info_hash))
-                }).unwrap_or(Cursor::None);
+                let cursor = after
+                    .map(|c| Cursor::from_key((c.created_at.timestamp_micros(), c.info_hash)))
+                    .unwrap_or(Cursor::None);
 
                 DownloadIter::IndexScan(
-                    self.db.index_scan(CreatedAt)?
+                    self.db
+                        .index_scan(CreatedAt)?
                         .range((from.timestamp_micros(),)..)
                         .after(cursor)
-                        .iter()?
+                        .iter()?,
                 )
-            },
+            }
             (None, None) => {
-                let cursor = after.map(|c| {
-                    Cursor::from_key(c.info_hash)
-                }).unwrap_or(Cursor::None);
+                let cursor = after
+                    .map(|c| Cursor::from_key(c.info_hash))
+                    .unwrap_or(Cursor::None);
 
-                DownloadIter::ColScan(
-                    self.db.scan()?.after(cursor).iter()?
-                )
-            },
+                DownloadIter::ColScan(self.db.scan()?.after(cursor).iter()?)
+            }
         };
 
         Ok(iter)
@@ -191,7 +204,9 @@ impl DownloadRepository for RedbStore {
     }
 
     fn remove(&self, info_hash: &str) -> Result<(), RepositoryError> {
-        self.db.remove(info_hash.to_owned()).map_err(RepositoryError::from)
+        self.db
+            .remove(info_hash.to_owned())
+            .map_err(RepositoryError::from)
     }
 }
 
