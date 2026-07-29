@@ -190,6 +190,16 @@ impl RedbStore {
     }
 }
 
+impl From<Error> for RepositoryError {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::NotFound(_) => RepositoryError::NotFound,
+            Error::AlreadyExists(_) => RepositoryError::AlreadyExists,
+            Error::Unexpected(s) => RepositoryError::Storage(s),
+            Error::Backend(e) => RepositoryError::Storage(e.to_string()),
+            Error::Codec(e) => RepositoryError::Serde(e.to_string()),
+            Error::CursorOutOfBounds => RepositoryError::Storage("cursor out of bounds".into()),
+        }
     }
 }
 
