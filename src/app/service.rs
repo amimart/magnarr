@@ -17,5 +17,7 @@ pub trait DownloadService: Send + Sync {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<Box<dyn Iterator<Item = Result<Entry<Download>, AppError>> + '_>, AppError>;
+    ) -> Result<DownloadIter<'_>, AppError>;
 }
+
+pub type DownloadIter<'a> = Box<dyn Iterator<Item = Result<Entry<Download>, AppError>> + 'a>;

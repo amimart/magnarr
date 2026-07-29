@@ -3,7 +3,6 @@ pub mod error;
 pub mod service;
 pub mod torrent;
 
-use collette::iter::Entry;
 use collette::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -12,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::app::error::AppError;
-use crate::app::service::DownloadService;
+use crate::app::service::{DownloadIter, DownloadService};
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
@@ -80,7 +79,7 @@ where
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<Box<dyn Iterator<Item = Result<Entry<Download>, AppError>> + '_>, AppError> {
+    ) -> Result<DownloadIter<'_>, AppError> {
         Ok(Box::new(
             self.repository
                 .list(
@@ -196,7 +195,7 @@ where
         )?;
         Ok(downloading_iter.chain(submitted_iter).map(|r| match r {
             Ok(e) => Ok(e.record),
-            Err(e) => Err(e.into()),
+            Err(e) => Err(e),
         }))
     }
 
@@ -288,6 +287,7 @@ mod tests {
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
     use async_trait::async_trait;
+    use collette::iter::Entry;
     use std::sync::Mutex;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";

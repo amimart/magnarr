@@ -110,7 +110,7 @@ mod tests {
     use super::*;
     use crate::app::download::SortOrder as AppSortOrder;
     use crate::app::error::AppError;
-    use crate::app::service::DownloadService;
+    use crate::app::service::{DownloadIter, DownloadService};
     use crate::types::DownloadStatus as DomainDownloadStatus;
     use crate::types::{Download as DomainDownload, Magnet};
     use async_graphql::Request;
@@ -154,8 +154,7 @@ mod tests {
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
             order: AppSortOrder,
-        ) -> Result<Box<dyn Iterator<Item = Result<Entry<DomainDownload>, AppError>> + '_>, AppError>
-        {
+        ) -> Result<DownloadIter<'_>, AppError> {
             *self.last_downloads_call.lock().unwrap() = Some(DownloadsCall {
                 status,
                 from,
