@@ -28,6 +28,15 @@ impl Item for Download {
     }
 }
 
+impl_enum_key!(DownloadStatus as u8 {
+    DownloadStatus::Queued => 0,
+    DownloadStatus::Submitted => 1,
+    DownloadStatus::Downloading => 2,
+    DownloadStatus::Importing => 3,
+    DownloadStatus::Imported => 4,
+    DownloadStatus::Failed => 5,
+});
+
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 /// Key: `{created_at}:{info_hash}`, value: info_hash. Enables ordered iteration across all downloads.
 const CREATED_AT_INDEX: TableDefinition<&str, &str> = TableDefinition::new("created_at_index");
