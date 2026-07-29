@@ -146,7 +146,7 @@ impl DownloadRepository for RedbStore {
                     })
                     .unwrap_or(Cursor::None);
 
-                DownloadIter::IndexScan(
+                DownloadIter::new(
                     self.db
                         .index_scan(StatusAndCreatedAt)
                         .map_err(|e| RepositoryError::Storage(e.to_string()))?
@@ -164,7 +164,7 @@ impl DownloadRepository for RedbStore {
                     })
                     .unwrap_or(Cursor::None);
 
-                DownloadIter::IndexScan(
+                DownloadIter::new(
                     self.db
                         .index_scan(StatusAndCreatedAt)
                         .map_err(|e| RepositoryError::Storage(e.to_string()))?
@@ -179,7 +179,7 @@ impl DownloadRepository for RedbStore {
                     .map(|c| Cursor::from_key((c.created_at.timestamp_micros(), c.info_hash)))
                     .unwrap_or(Cursor::None);
 
-                DownloadIter::IndexScan(
+                DownloadIter::new(
                     self.db
                         .index_scan(CreatedAt)?
                         .range((from.timestamp_micros(),)..)
@@ -193,7 +193,7 @@ impl DownloadRepository for RedbStore {
                     .map(|c| Cursor::from_key((c.created_at.timestamp_micros(),)))
                     .unwrap_or(Cursor::None);
 
-                DownloadIter::IndexScan(
+                DownloadIter::new(
                     self.db.index_scan(CreatedAt)?
                         .direction(order.into())
                         .after(cursor)

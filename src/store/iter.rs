@@ -1,24 +1,26 @@
 use crate::app::download::RepositoryError;
 use crate::types::Download;
 use collette::backend::redb::RedbReadStore;
-use collette::iter::{CollectionIterator, IndexIterator};
+use collette::iter::IndexIterator;
 
-pub enum DownloadIter {
-    IndexScan(IndexIterator<RedbReadStore, Download>),
-    ColScan(CollectionIterator<RedbReadStore, Download>),
+pub struct DownloadIter {
+    inner: IndexIterator<RedbReadStore, Download>,
+}
+
+impl DownloadIter {
+    pub fn new(inner: IndexIterator<RedbReadStore, Download>) -> Self {
+        Self { inner }
+    }
 }
 
 impl Iterator for DownloadIter {
     type Item = Result<Download, RepositoryError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            DownloadIter::IndexScan(iter) => iter.next(),
-            DownloadIter::ColScan(iter) => iter.next(),
-        }
-        .map(|res| match res {
-            Ok(entry) => Ok(entry.record),
-            Err(err) => Err(err.into()),
-        })
+        self.inner.next()
+            .map(|res| match res {
+                Ok(entry) => Ok(entry.record),
+                Err(err) => Err(err.into()),
+            })
     }
 }
