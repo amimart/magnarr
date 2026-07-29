@@ -48,10 +48,7 @@ impl QueryRoot {
 
         let mut edges = iter
             .take(limit + 1)
-            .map(|r| r.map(|e| Edge::new(
-                encode_downloads_cursor(e.key.into()),
-                e.record.into(),
-            )))
+            .map(|r| r.map(|e| Edge::new(encode_downloads_cursor(e.key.into()), e.record.into())))
             .collect::<Result<Vec<_>, _>>()?;
 
         let has_next_page = edges.len() > limit;
@@ -119,6 +116,8 @@ mod tests {
     use async_graphql::Request;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
+    use collette::iter::Entry;
+    use collette::Cursor;
 
     const MAGNETS: [&str; 3] = [
         "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=first",
@@ -155,7 +154,7 @@ mod tests {
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
             order: AppSortOrder,
-        ) -> Result<Box<dyn Iterator<Item = Result<DomainDownload, AppError>> + '_>, AppError>
+        ) -> Result<Box<dyn Iterator<Item = Result<Entry<DomainDownload>, AppError>> + '_>, AppError>
         {
             *self.last_downloads_call.lock().unwrap() = Some(DownloadsCall {
                 status,
@@ -174,44 +173,41 @@ mod tests {
                 downloads.reverse();
             }
 
-            let iter = downloads.into_iter().filter(move |download| {
-                if status.is_some_and(|status| download.status != status) {
-                    return false;
+            let mut entries = downloads
+                .into_iter()
+                .filter(move |download| {
+                    if status.is_some_and(|status| download.status != status) {
+                        return false;
+                    }
+
+                    if let Some(from) = from {
+                        let key = (download.created_at, download.info_hash.as_str());
+                        let from_key = (from, "");
+                        return match order {
+                            AppSortOrder::Asc => key >= from_key,
+                            AppSortOrder::Desc => key <= from_key,
+                        };
+                    }
+
+                    true
+                })
+                .map(|record| {
+                    let key = Cursor::from_key((
+                        record.created_at.timestamp_micros(),
+                        record.info_hash.as_str(),
+                    ));
+                    Entry { record, key }
+                })
+                .collect::<Vec<_>>();
+
+            if let Some(after) = after {
+                let cursor = Cursor::from(after);
+                if let Some(position) = entries.iter().position(|entry| entry.key == cursor) {
+                    entries.drain(..=position);
                 }
+            }
 
-                if let Some(from) = from {
-                    let key = (download.created_at, download.info_hash.as_str());
-                    let from_key = (from, "");
-                    let after_key = after
-                        .as_ref()
-                        .map(|cursor| (cursor.created_at, cursor.info_hash.as_str()));
-
-                    return match order {
-                        AppSortOrder::Asc => {
-                            key >= from_key && after_key.is_none_or(|after_key| key > after_key)
-                        }
-                        AppSortOrder::Desc => {
-                            key <= from_key && after_key.is_none_or(|after_key| key < after_key)
-                        }
-                    };
-                }
-
-                match &after {
-                    Some(after) => match order {
-                        AppSortOrder::Asc => {
-                            (download.created_at, download.info_hash.as_str())
-                                > (after.created_at, after.info_hash.as_str())
-                        }
-                        AppSortOrder::Desc => {
-                            (download.created_at, download.info_hash.as_str())
-                                < (after.created_at, after.info_hash.as_str())
-                        }
-                    },
-                    None => true,
-                }
-            });
-
-            Ok(Box::new(iter.map(Ok)))
+            Ok(Box::new(entries.into_iter().map(Ok)))
         }
     }
 
@@ -291,11 +287,10 @@ mod tests {
             Some(DownloadsCall {
                 status: None,
                 from: None,
-                after: Some(DownloadCursor {
-                    status: DomainDownloadStatus::Submitted,
-                    created_at: Utc.timestamp_opt(20, 0).unwrap(),
-                    info_hash: "FEDCBA0987654321FEDCBA0987654321FEDCBA09".to_owned(),
-                }),
+                after: Some(DownloadCursor::from(Cursor::from_key((
+                    Utc.timestamp_opt(20, 0).unwrap().timestamp_micros(),
+                    "FEDCBA0987654321FEDCBA0987654321FEDCBA09",
+                )))),
                 order: AppSortOrder::Desc,
             })
         );

@@ -1,5 +1,5 @@
-use collette::{Cursor, Direction};
 use collette::iter::Entry;
+use collette::{Cursor, Direction};
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
