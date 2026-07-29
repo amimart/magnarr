@@ -1,7 +1,6 @@
-use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
+use crate::app::download::{DownloadRepository, RepositoryError, SortOrder};
 use crate::store::iter::DownloadIter;
 use crate::types::{Download, DownloadStatus};
-use std::ops::Bound;
 use std::path::PathBuf;
 use collette::backend::redb::RedbMultiStore;
 use collette::{impl_enum_key, Collection, Item, Index, Multi, Error, PrefixableScan, Cursor, Scan};
@@ -69,99 +68,6 @@ impl Index<Download> for StatusAndCreatedAt {
 
     fn key(entity: &Download) -> Self::Key<'_> {
         (entity.status, entity.created_at.timestamp_micros())
-    }
-}
-
-const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
-/// Key: `{created_at}:{info_hash}`, value: info_hash. Enables ordered iteration across all downloads.
-const CREATED_AT_INDEX: TableDefinition<&str, &str> = TableDefinition::new("created_at_index");
-/// Key: `{status}:{created_at}:{info_hash}`, value: info_hash. Enables ordered iteration within one status.
-/// `;` (0x3B) is the next ASCII char after `:` (0x3A), so `{status};` is an exclusive upper bound.
-const STATUS_CREATED_AT_INDEX: TableDefinition<&str, &str> =
-    TableDefinition::new("status_created_at_index");
-
-const I64_SIGN_MASK: u64 = 1 << 63;
-
-fn status_prefix(status: DownloadStatus) -> &'static str {
-    match status {
-        DownloadStatus::Queued => "00",
-        DownloadStatus::Submitted => "01",
-        DownloadStatus::Downloading => "02",
-        DownloadStatus::Importing => "03",
-        DownloadStatus::Imported => "04",
-        DownloadStatus::Failed => "05",
-    }
-}
-
-fn normalize_i64(value: i64) -> u64 {
-    (value as u64) ^ I64_SIGN_MASK
-}
-
-fn as_str_bound(bound: Bound<&String>) -> Bound<&str> {
-    match bound {
-        Bound::Included(value) => Bound::Included(value.as_str()),
-        Bound::Excluded(value) => Bound::Excluded(value.as_str()),
-        Bound::Unbounded => Bound::Unbounded,
-    }
-}
-
-fn created_at_index_prefix(created_at: chrono::DateTime<chrono::Utc>) -> String {
-    format!("{:016x}", normalize_i64(created_at.timestamp_micros()))
-}
-
-fn created_at_index_key(created_at: chrono::DateTime<chrono::Utc>, info_hash: &str) -> String {
-    format!("{}:{info_hash}", created_at_index_prefix(created_at))
-}
-
-fn status_created_at_index_key(
-    status: DownloadStatus,
-    created_at: chrono::DateTime<chrono::Utc>,
-    info_hash: &str,
-) -> String {
-    format!(
-        "{}:{}",
-        status_prefix(status),
-        created_at_index_key(created_at, info_hash)
-    )
-}
-
-struct Prefix {
-    value: Option<String>,
-}
-
-impl Prefix {
-    fn new(value: String) -> Self {
-        Self { value: Some(value) }
-    }
-
-    fn empty() -> Self {
-        Self { value: None }
-    }
-
-    fn start_bound(&self) -> Bound<String> {
-        self.value
-            .as_ref()
-            .map(|v| Bound::Included(format!("{}:", v)))
-            .unwrap_or(Bound::Unbounded)
-    }
-
-    fn end_bound(&self) -> Bound<String> {
-        self.value
-            .as_ref()
-            .map(|v| Bound::Excluded(format!("{};", v)))
-            .unwrap_or(Bound::Unbounded)
-    }
-}
-
-impl From<&str> for Prefix {
-    fn from(value: &str) -> Self {
-        Self::new(value.to_string())
-    }
-}
-
-impl From<(&str, &str)> for Prefix {
-    fn from(values: (&str, &str)) -> Self {
-        Self::new(format!("{}:{}", values.0, values.1))
     }
 }
 
