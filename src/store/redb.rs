@@ -167,7 +167,7 @@ impl From<(&str, &str)> for Prefix {
 }
 
 pub struct RedbStore {
-    db: Database,
+    db: Collection<RedbMultiStore, Download, Cons<StatusAndCreatedAt, Cons<CreatedAt, Nil>>>,
 }
 
 impl RedbStore {
@@ -179,23 +179,17 @@ impl RedbStore {
             }
         }
 
-        let db = Database::create(path).map_err(|e| RepositoryError::Storage(e.to_string()))?;
+        let db = RedbMultiStore::create(path).map_err(|e| RepositoryError::Storage(e.to_string()))?;
 
-        let tx = db
-            .begin_write()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        {
-            tx.open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-            tx.open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-            tx.open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        }
-        tx.commit()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
+        Ok(Self {
+            db: collette::collection::<Download, _>("downloads", db)
+                .with_index::<CreatedAt>()
+                .with_index::<StatusAndCreatedAt>()
+                .build()
+        })
+    }
+}
 
-        Ok(Self { db })
     }
 }
 
