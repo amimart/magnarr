@@ -17,10 +17,9 @@ impl Iterator for DownloadIter {
     type Item = Result<Download, RepositoryError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next()
-            .map(|res| match res {
-                Ok(entry) => Ok(entry.record),
-                Err(err) => Err(err.into()),
-            })
+        self.inner.next().map(|res| match res {
+            Ok(entry) => Ok(entry.record),
+            Err(err) => Err(err.into()),
+        })
     }
 }

@@ -194,10 +194,11 @@ impl DownloadRepository for RedbStore {
                     .unwrap_or(Cursor::None);
 
                 DownloadIter::new(
-                    self.db.index_scan(CreatedAt)?
+                    self.db
+                        .index_scan(CreatedAt)?
                         .direction(order.into())
                         .after(cursor)
-                        .iter()?
+                        .iter()?,
                 )
             }
         };
