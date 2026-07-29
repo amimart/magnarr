@@ -4,6 +4,29 @@ use crate::types::{Download, DownloadStatus};
 use redb::{Database, ReadableTable, TableDefinition};
 use std::ops::{Bound, RangeBounds};
 use std::path::PathBuf;
+use collette::backend::redb::RedbMultiStore;
+use collette::{impl_enum_key, Collection, Item, Index, Multi, Error, PrefixableScan, Cursor, Scan};
+use collette::index_registry::{Cons, Nil};
+
+impl Item for Download {
+    type Key<'a> = &'a str
+    where
+        Self: 'a;
+
+    type Error = serde_json::Error;
+
+    fn key(&self) -> Self::Key<'_> {
+        self.info_hash.as_str()
+    }
+
+    fn to_bytes(&self) -> Result<Vec<u8>, Self::Error> {
+        serde_json::to_vec(self)
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, Self::Error> {
+        serde_json::from_slice(bytes)
+    }
+}
 
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 /// Key: `{created_at}:{info_hash}`, value: info_hash. Enables ordered iteration across all downloads.
