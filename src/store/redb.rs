@@ -303,52 +303,7 @@ impl DownloadRepository for RedbStore {
     }
 
     fn remove(&self, info_hash: &str) -> Result<(), RepositoryError> {
-        let tx = self
-            .db
-            .begin_write()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        {
-            let mut table = tx
-                .open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-            let entry = table
-                .get(info_hash)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                .ok_or(RepositoryError::NotFound)?;
-
-            let download: Download = serde_json::from_str(entry.value())
-                .map_err(|e| RepositoryError::Serde(e.to_string()))?;
-
-            drop(entry);
-
-            table
-                .remove(info_hash)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-            let created_at_key = created_at_index_key(download.created_at, &download.info_hash);
-            let mut created_at_idx = tx
-                .open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-            created_at_idx
-                .remove(created_at_key.as_str())
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-            let status_created_at_key = status_created_at_index_key(
-                download.status,
-                download.created_at,
-                &download.info_hash,
-            );
-            let mut status_created_at_idx = tx
-                .open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-            status_created_at_idx
-                .remove(status_created_at_key.as_str())
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        }
-        tx.commit()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        Ok(())
+        self.db.remove(info_hash.to_owned()).map_err(RepositoryError::from)
     }
 }
 
