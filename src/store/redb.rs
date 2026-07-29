@@ -1,8 +1,7 @@
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
-use crate::store::iter::{RedbDownloadIndexIter, RedbIndexIter};
+use crate::store::iter::DownloadIter;
 use crate::types::{Download, DownloadStatus};
-use redb::{Database, ReadableTable, TableDefinition};
-use std::ops::{Bound, RangeBounds};
+use std::ops::Bound;
 use std::path::PathBuf;
 use collette::backend::redb::RedbMultiStore;
 use collette::{impl_enum_key, Collection, Item, Index, Multi, Error, PrefixableScan, Cursor, Scan};
@@ -221,81 +220,34 @@ impl DownloadRepository for RedbStore {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Option<DownloadCursor>,
+        after: Cursor,
         order: SortOrder,
-    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
-        let (lower_prefix, upper_prefix) = match (status, from) {
-            (Some(s), Some(f)) => (
-                Prefix::from((status_prefix(s), created_at_index_prefix(f).as_str())),
-                Prefix::new(status_prefix(s).to_string()),
-            ),
-            (Some(s), None) => (
-                Prefix::new(status_prefix(s).to_string()),
-                Prefix::new(status_prefix(s).to_string()),
-            ),
-            (None, Some(f)) => (Prefix::new(created_at_index_prefix(f)), Prefix::empty()),
-            (None, None) => (Prefix::empty(), Prefix::empty()),
-        };
-
-        let (idx_name, cursor_bound) = match status {
-            Some(_) => (
-                STATUS_CREATED_AT_INDEX,
-                after.map(|c| {
-                    Bound::Excluded(status_created_at_index_key(
-                        c.status,
-                        c.created_at,
-                        &c.info_hash,
-                    ))
-                }),
-            ),
-            None => (
-                CREATED_AT_INDEX,
-                after.map(|c| Bound::Excluded(created_at_index_key(c.created_at, &c.info_hash))),
-            ),
-        };
-
-        let range = match cursor_bound {
-            None => match order {
-                SortOrder::Asc => (lower_prefix.start_bound(), upper_prefix.end_bound()),
-                SortOrder::Desc => (upper_prefix.start_bound(), lower_prefix.end_bound()),
-            },
-            Some(cbound) => match order {
-                SortOrder::Asc => (cbound, upper_prefix.end_bound()),
-                SortOrder::Desc => (upper_prefix.end_bound(), cbound),
-            },
-        };
-
-        let ref_range = (
-            as_str_bound(range.start_bound()),
-            as_str_bound(range.end_bound()),
-        );
-
-        let tx = self
-            .db
-            .begin_read()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-        let idx = tx
-            .open_table(idx_name)
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-        let iter: RedbIndexIter = match order {
-            SortOrder::Asc => Box::new(
-                idx.range::<&str>(ref_range)
-                    .map_err(|e| RepositoryError::Storage(e.to_string()))?,
-            ),
-            SortOrder::Desc => Box::new(
-                idx.range::<&str>(ref_range)
+    ) -> Result<DownloadIter, RepositoryError> {
+        let iter = match (status, from) {
+            (Some(status), Some(from)) => DownloadIter::IndexScan(
+                self.db.index_scan(StatusAndCreatedAt)
                     .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                    .rev(),
+                    .prefix(status)
+                    .range(from.timestamp_micros()..)
+                    .direction(order.into())
+                    .after(after)
+                    .iter()?
             ),
+            (Some(status), None) => DownloadIter::IndexScan(
+                self.db.index_scan(StatusAndCreatedAt)
+                    .map_err(|e| RepositoryError::Storage(e.to_string()))?
+                    .prefix(status)
+                    .direction(order.into())
+                    .after(after)
+                    .iter()?
+            ),
+            (None, Some(from)) => DownloadIter::IndexScan(
+                self.db.index_scan(CreatedAt)?.range((from.timestamp_micros(),)..).iter()?
+            ),
+            (None, None) => DownloadIter::ColScan(self.db.scan()?.iter()?),
         };
 
-        let downloads = tx
-            .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-        Ok(RedbDownloadIndexIter::new(downloads, iter))
+        Ok(iter)
     }
 
     fn update(&self, download: &Download) -> Result<(), RepositoryError> {

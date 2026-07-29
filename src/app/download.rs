@@ -1,4 +1,4 @@
-use collette::Direction;
+use collette::{Cursor, Direction};
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
@@ -55,7 +55,7 @@ pub trait DownloadRepository: Send + Sync {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Option<DownloadCursor>,
+        after: Cursor,
         order: SortOrder,
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>;
     fn update(&self, download: &Download) -> Result<(), RepositoryError>;
