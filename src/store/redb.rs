@@ -37,6 +37,24 @@ impl_enum_key!(DownloadStatus as u8 {
     DownloadStatus::Failed => 5,
 });
 
+struct CreatedAt;
+
+impl Index<Download> for CreatedAt {
+    type Key<'a> = (i64,)
+    where
+        Download: 'a;
+
+    type Kind<'a> = Multi
+    where
+        Download: 'a;
+
+    const NAME: &'static str = "created_at";
+
+    fn key(entity: &Download) -> Self::Key<'_> {
+        (entity.created_at.timestamp_micros(),)
+    }
+}
+
 const DOWNLOADS: TableDefinition<&str, &str> = TableDefinition::new("downloads");
 /// Key: `{created_at}:{info_hash}`, value: info_hash. Enables ordered iteration across all downloads.
 const CREATED_AT_INDEX: TableDefinition<&str, &str> = TableDefinition::new("created_at_index");
