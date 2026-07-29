@@ -183,16 +183,22 @@ impl DownloadRepository for RedbStore {
                     self.db
                         .index_scan(CreatedAt)?
                         .range((from.timestamp_micros(),)..)
+                        .direction(order.into())
                         .after(cursor)
                         .iter()?,
                 )
             }
             (None, None) => {
                 let cursor = after
-                    .map(|c| Cursor::from_key(c.info_hash))
+                    .map(|c| Cursor::from_key((c.created_at.timestamp_micros(),)))
                     .unwrap_or(Cursor::None);
 
-                DownloadIter::ColScan(self.db.scan()?.after(cursor).iter()?)
+                DownloadIter::IndexScan(
+                    self.db.index_scan(CreatedAt)?
+                        .direction(order.into())
+                        .after(cursor)
+                        .iter()?
+                )
             }
         };
 
