@@ -1,3 +1,4 @@
+use collette::Direction;
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
@@ -7,6 +8,15 @@ pub enum SortOrder {
     Asc,
     #[default]
     Desc,
+}
+
+impl Into<Direction> for SortOrder {
+    fn into(self) -> Direction {
+        match self {
+            SortOrder::Asc => Direction::LeftToRight,
+            SortOrder::Desc => Direction::RightToLeft,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
