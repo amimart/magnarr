@@ -205,53 +205,7 @@ impl From<Error> for RepositoryError {
 
 impl DownloadRepository for RedbStore {
     fn insert(&self, download: &Download) -> Result<(), RepositoryError> {
-        let json =
-            serde_json::to_string(download).map_err(|e| RepositoryError::Serde(e.to_string()))?;
-
-        let tx = self
-            .db
-            .begin_write()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        {
-            let mut table = tx
-                .open_table(DOWNLOADS)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-            if table
-                .get(download.info_hash.as_str())
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                .is_some()
-            {
-                return Err(RepositoryError::AlreadyExists);
-            }
-
-            table
-                .insert(download.info_hash.as_str(), json.as_str())
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-            let created_at_key = created_at_index_key(download.created_at, &download.info_hash);
-            let mut created_at_idx = tx
-                .open_table(CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-            created_at_idx
-                .insert(created_at_key.as_str(), download.info_hash.as_str())
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-
-            let status_created_at_key = status_created_at_index_key(
-                download.status,
-                download.created_at,
-                &download.info_hash,
-            );
-            let mut status_created_at_idx = tx
-                .open_table(STATUS_CREATED_AT_INDEX)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-            status_created_at_idx
-                .insert(status_created_at_key.as_str(), download.info_hash.as_str())
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        }
-        tx.commit()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        Ok(())
+        self.db.insert(download).map_err(RepositoryError::from)
     }
 
     fn get(&self, info_hash: &str) -> Result<Download, RepositoryError> {
