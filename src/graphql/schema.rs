@@ -48,13 +48,10 @@ impl QueryRoot {
 
         let mut edges = iter
             .take(limit + 1)
-            .map(|download| match download {
-                Ok(d) => {
-                    let cursor = encode_downloads_cursor(&DownloadCursor::from_download(&d));
-                    Ok(Edge::new(cursor, d.into()))
-                }
-                Err(e) => Err(e),
-            })
+            .map(|r| r.map(|e| Edge::new(
+                encode_downloads_cursor(e.key.into()),
+                e.record.into(),
+            )))
             .collect::<Result<Vec<_>, _>>()?;
 
         let has_next_page = edges.len() > limit;
@@ -97,16 +94,15 @@ pub fn build_schema_sdl() -> String {
         .sdl()
 }
 
-fn encode_downloads_cursor(cursor: &DownloadCursor) -> String {
-    let raw = serde_json::to_vec(cursor).expect("download cursor should always serialize");
-    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw)
+fn encode_downloads_cursor(cursor: DownloadCursor) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(cursor)
 }
 
 fn decode_downloads_cursor(cursor: &str) -> async_graphql::Result<DownloadCursor> {
     let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(cursor)
         .map_err(|_| Error::new("invalid downloads cursor"))?;
-    serde_json::from_slice(&raw).map_err(|_| Error::new("invalid downloads cursor"))
+    Ok(DownloadCursor::new(raw))
 }
 
 #[cfg(test)]

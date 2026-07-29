@@ -6,7 +6,8 @@ pub mod torrent;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-
+use collette::Cursor;
+use collette::iter::Entry;
 use tokio_util::sync::CancellationToken;
 
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
@@ -79,10 +80,10 @@ where
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<Box<dyn Iterator<Item = Result<Download, AppError>> + '_>, AppError> {
+    ) -> Result<Box<dyn Iterator<Item = Result<Entry<Download>, AppError>> + '_>, AppError> {
         Ok(Box::new(
             self.repository
-                .list(status, from, after, order)?
+                .list(status, from, after.map(Cursor::from).unwrap_or(Cursor::None), order)?
                 .map(|download| download.map_err(AppError::from)),
         ))
     }
@@ -179,20 +180,29 @@ where
         let downloading_iter = self.repository.list(
             Some(DownloadStatus::Downloading),
             None,
-            None,
+            Cursor::None,
             SortOrder::Asc,
         )?;
         let submitted_iter =
             self.repository
-                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
-        Ok(downloading_iter.chain(submitted_iter))
+                .list(Some(DownloadStatus::Submitted), None, Cursor::None, SortOrder::Asc)?;
+        Ok(
+            downloading_iter.chain(submitted_iter)
+                .map(|r| match r {
+                    Ok(e) => Ok(e.record),
+                    Err(e) => Err(e.into()),
+                })
+        )
     }
 
     async fn import_downloads(&self, token: &CancellationToken) {
         let importing = match self
             .repository
-            .list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc)
-            .and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>())
+            .list(Some(DownloadStatus::Importing), None, Cursor::None, SortOrder::Asc)
+            .and_then(|iter| iter
+                .map(|r| r.map(|e| e.record))
+                .collect::<Result<Vec<_>, RepositoryError>>()
+            )
         {
             Ok(downloads) => downloads,
             Err(e) => {

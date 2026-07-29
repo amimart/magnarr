@@ -1,4 +1,5 @@
-use collette::Direction;
+use collette::{Cursor, Direction};
+use collette::iter::Entry;
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
@@ -19,20 +20,33 @@ impl From<SortOrder> for Direction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct DownloadCursor {
-    pub status: DownloadStatus,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub info_hash: String,
-}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadCursor(Vec<u8>);
 
 impl DownloadCursor {
-    pub fn from_download(download: &Download) -> Self {
-        Self {
-            status: download.status,
-            created_at: download.created_at,
-            info_hash: download.info_hash.clone(),
+    pub fn new(raw: Vec<u8>) -> Self {
+        DownloadCursor(raw)
+    }
+}
+
+impl AsRef<[u8]> for DownloadCursor {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Cursor> for DownloadCursor {
+    fn from(cursor: Cursor) -> Self {
+        match cursor {
+            Cursor::None => DownloadCursor(Vec::new()),
+            Cursor::Key(k) => DownloadCursor(k.to_vec()),
         }
+    }
+}
+
+impl From<DownloadCursor> for Cursor {
+    fn from(value: DownloadCursor) -> Self {
+        Cursor::Key(value.0.into())
     }
 }
 
@@ -55,9 +69,9 @@ pub trait DownloadRepository: Send + Sync {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Option<DownloadCursor>,
+        after: Cursor,
         order: SortOrder,
-    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>;
+    ) -> Result<impl Iterator<Item = Result<Entry<Download>, RepositoryError>>, RepositoryError>;
     fn update(&self, download: &Download) -> Result<(), RepositoryError>;
     fn remove(&self, info_hash: &str) -> Result<(), RepositoryError>;
 }

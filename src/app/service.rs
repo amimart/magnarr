@@ -2,6 +2,7 @@ use crate::app::download::{DownloadCursor, SortOrder};
 use crate::app::error::AppError;
 use crate::types::{Download, DownloadStatus, Magnet};
 use async_trait::async_trait;
+use collette::iter::Entry;
 
 #[async_trait]
 pub trait DownloadService: Send + Sync {
@@ -16,5 +17,5 @@ pub trait DownloadService: Send + Sync {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<Box<dyn Iterator<Item = Result<Download, AppError>> + '_>, AppError>;
+    ) -> Result<Box<dyn Iterator<Item = Result<Entry<Download>, AppError>> + '_>, AppError>;
 }

@@ -7,6 +7,7 @@ use collette::{
     impl_enum_key, Collection, Cursor, Error, Index, Item, Multi, PrefixableScan, Scan,
 };
 use std::path::PathBuf;
+use collette::iter::Entry;
 
 impl Item for Download {
     type Key<'a>
@@ -135,75 +136,37 @@ impl DownloadRepository for RedbStore {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Option<DownloadCursor>,
+        after: Cursor,
         order: SortOrder,
-    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
-        let iter = match (status, from) {
-            (Some(status), Some(from)) => {
-                let cursor = after
-                    .map(|c| {
-                        Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
-                    })
-                    .unwrap_or(Cursor::None);
-
-                DownloadIter::new(
-                    self.db
-                        .index_scan(StatusAndCreatedAt)
-                        .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                        .prefix(status)
-                        .range(from.timestamp_micros()..)
-                        .direction(order.into())
-                        .after(cursor)
-                        .iter()?,
-                )
-            }
-            (Some(status), None) => {
-                let cursor = after
-                    .map(|c| {
-                        Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
-                    })
-                    .unwrap_or(Cursor::None);
-
-                DownloadIter::new(
-                    self.db
-                        .index_scan(StatusAndCreatedAt)
-                        .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                        .prefix(status)
-                        .direction(order.into())
-                        .after(cursor)
-                        .iter()?,
-                )
-            }
-            (None, Some(from)) => {
-                let cursor = after
-                    .map(|c| Cursor::from_key((c.created_at.timestamp_micros(), c.info_hash)))
-                    .unwrap_or(Cursor::None);
-
-                DownloadIter::new(
-                    self.db
-                        .index_scan(CreatedAt)?
-                        .range((from.timestamp_micros(),)..)
-                        .direction(order.into())
-                        .after(cursor)
-                        .iter()?,
-                )
-            }
-            (None, None) => {
-                let cursor = after
-                    .map(|c| Cursor::from_key((c.created_at.timestamp_micros(),)))
-                    .unwrap_or(Cursor::None);
-
-                DownloadIter::new(
-                    self.db
-                        .index_scan(CreatedAt)?
-                        .direction(order.into())
-                        .after(cursor)
-                        .iter()?,
-                )
-            }
-        };
-
-        Ok(iter)
+    ) -> Result<impl Iterator<Item = Result<Entry<Download>, RepositoryError>>, RepositoryError> {
+        Ok(match (status, from) {
+            (Some(status), Some(from)) => self.db
+                .index_scan(StatusAndCreatedAt)
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?
+                .prefix(status)
+                .range(from.timestamp_micros()..)
+                .direction(order.into())
+                .after(after)
+                .iter()?,
+            (Some(status), None) => self.db
+                .index_scan(StatusAndCreatedAt)
+                .map_err(|e| RepositoryError::Storage(e.to_string()))?
+                .prefix(status)
+                .direction(order.into())
+                .after(after)
+                .iter()?,
+            (None, Some(from)) => self.db
+                .index_scan(CreatedAt)?
+                .range((from.timestamp_micros(),)..)
+                .direction(order.into())
+                .after(after)
+                .iter()?,
+            (None, None) => self.db
+                .index_scan(CreatedAt)?
+                .direction(order.into())
+                .after(after)
+                .iter()?,
+        }.map(|r| r.map_err(RepositoryError::from)))
     }
 
     fn update(&self, download: &Download) -> Result<(), RepositoryError> {
