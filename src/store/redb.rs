@@ -1,10 +1,11 @@
-use crate::app::download::{DownloadRepository, RepositoryError, SortOrder};
+use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::store::iter::DownloadIter;
 use crate::types::{Download, DownloadStatus};
 use std::path::PathBuf;
 use collette::backend::redb::RedbMultiStore;
 use collette::{impl_enum_key, Collection, Item, Index, Multi, Error, PrefixableScan, Cursor, Scan};
 use collette::index_registry::{Cons, Nil};
+use collette::iter::Entry;
 
 impl Item for Download {
     type Key<'a> = &'a str
@@ -126,31 +127,60 @@ impl DownloadRepository for RedbStore {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Cursor,
+        after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<DownloadIter, RepositoryError> {
+    ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError> {
         let iter = match (status, from) {
-            (Some(status), Some(from)) => DownloadIter::IndexScan(
-                self.db.index_scan(StatusAndCreatedAt)
-                    .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                    .prefix(status)
-                    .range(from.timestamp_micros()..)
-                    .direction(order.into())
-                    .after(after)
-                    .iter()?
-            ),
-            (Some(status), None) => DownloadIter::IndexScan(
-                self.db.index_scan(StatusAndCreatedAt)
-                    .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                    .prefix(status)
-                    .direction(order.into())
-                    .after(after)
-                    .iter()?
-            ),
-            (None, Some(from)) => DownloadIter::IndexScan(
-                self.db.index_scan(CreatedAt)?.range((from.timestamp_micros(),)..).iter()?
-            ),
-            (None, None) => DownloadIter::ColScan(self.db.scan()?.iter()?),
+            (Some(status), Some(from)) => {
+                let cursor = after.map(|c| {
+                    Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
+                }).unwrap_or(Cursor::None);
+
+                DownloadIter::IndexScan(
+                    self.db.index_scan(StatusAndCreatedAt)
+                        .map_err(|e| RepositoryError::Storage(e.to_string()))?
+                        .prefix(status)
+                        .range(from.timestamp_micros()..)
+                        .direction(order.into())
+                        .after(cursor)
+                        .iter()?
+                )
+            },
+            (Some(status), None) => {
+                let cursor = after.map(|c| {
+                    Cursor::from_key((c.status, c.created_at.timestamp_micros(), c.info_hash))
+                }).unwrap_or(Cursor::None);
+
+                DownloadIter::IndexScan(
+                    self.db.index_scan(StatusAndCreatedAt)
+                        .map_err(|e| RepositoryError::Storage(e.to_string()))?
+                        .prefix(status)
+                        .direction(order.into())
+                        .after(cursor)
+                        .iter()?
+                )
+            },
+            (None, Some(from)) => {
+                let cursor = after.map(|c| {
+                    Cursor::from_key((c.created_at.timestamp_micros(), c.info_hash))
+                }).unwrap_or(Cursor::None);
+
+                DownloadIter::IndexScan(
+                    self.db.index_scan(CreatedAt)?
+                        .range((from.timestamp_micros(),)..)
+                        .after(cursor)
+                        .iter()?
+                )
+            },
+            (None, None) => {
+                let cursor = after.map(|c| {
+                    Cursor::from_key(c.info_hash)
+                }).unwrap_or(Cursor::None);
+
+                DownloadIter::ColScan(
+                    self.db.scan()?.after(cursor).iter()?
+                )
+            },
         };
 
         Ok(iter)

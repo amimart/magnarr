@@ -55,7 +55,7 @@ pub trait DownloadRepository: Send + Sync {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Cursor,
+        after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>;
     fn update(&self, download: &Download) -> Result<(), RepositoryError>;

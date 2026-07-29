@@ -1,5 +1,5 @@
 use collette::backend::redb::RedbReadStore;
-use collette::iter::{CollectionIterator, Entry, IndexIterator};
+use collette::iter::{CollectionIterator, IndexIterator};
 use crate::app::download::RepositoryError;
 use crate::types::Download;
 
@@ -9,12 +9,15 @@ pub enum DownloadIter {
 }
 
 impl Iterator for DownloadIter {
-    type Item = Result<Entry<Download>, RepositoryError>;
+    type Item = Result<Download, RepositoryError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
             DownloadIter::IndexScan(iter) => iter.next(),
             DownloadIter::ColScan(iter) => iter.next(),
-        }.map(|res| res.map_err(Into::into))
+        }.map(|res| match res {
+            Ok(entry) => Ok(entry.record),
+            Err(err) => Err(err.into()),
+        })
     }
 }
