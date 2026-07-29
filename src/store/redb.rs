@@ -209,18 +209,12 @@ impl DownloadRepository for RedbStore {
     }
 
     fn get(&self, info_hash: &str) -> Result<Download, RepositoryError> {
-        let tx = self
-            .db
-            .begin_read()
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        let table = tx
-            .open_table(DOWNLOADS)
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?;
-        let entry = table
-            .get(info_hash)
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?
-            .ok_or(RepositoryError::NotFound)?;
-        serde_json::from_str(entry.value()).map_err(|e| RepositoryError::Serde(e.to_string()))
+        self.db.get(info_hash.to_owned())
+            .map_err(RepositoryError::from)
+            .and_then(|res| match res {
+                Some(download) => Ok(download),
+                None => Err(RepositoryError::NotFound)
+            })
     }
 
     fn list(
