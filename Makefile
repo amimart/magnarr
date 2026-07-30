@@ -1,4 +1,4 @@
-.PHONY: all lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test test-rust audit check fix fix-rust fix-md schema local-init local-start local-stop local-clean clean help
+.PHONY: all lint lint-rust lint-rust-format lint-md lint-yaml lint-docker build build-rust build-docker test test-rust test-doc test-coverage audit check fix fix-rust fix-md schema local-init local-start local-stop local-clean clean help
 
 # Constants:
 TARGET_FOLDER       = target
@@ -62,11 +62,24 @@ build-docker: ## Build the Docker image
 	docker build --tag $(DOCKER_IMAGE) .
 
 ## Test:
-test: test-rust ## Run all tests
+.PHONY: test
+test: test-rust test-doc ## Run all tests
 
+.PHONY: test-rust
 test-rust: ## Run Rust tests
 	@printf "$(COLOR_GREEN)$(BOLD)🧪 Running tests...$(COLOR_RESET)\n"
-	cargo test
+	cargo test --workspace --all-features
+
+.PHONY: test-doc
+test-doc: ## Run Rust doc tests
+	@printf "$(COLOR_GREEN)$(BOLD)🧪 Running doc tests...$(COLOR_RESET)\n"
+	cargo test --doc --workspace --all-features
+
+## Coverage
+.PHONY: test-coverage
+test-coverage: ## Run Rust test coverage
+	@printf "$(COLOR_GREEN)$(BOLD)☂️ Running tests with coverage...$(COLOR_RESET)\n"
+	RUSTC_BOOTSTRAP=1 RUSTFLAGS="--cfg coverage_nightly" cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
 
 ## Checks:
 check: lint build test audit ## Run all checks
