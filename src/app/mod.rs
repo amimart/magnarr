@@ -3,15 +3,15 @@ pub mod error;
 pub mod service;
 pub mod torrent;
 
+use collette::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-
 use tokio_util::sync::CancellationToken;
 
 use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::app::error::AppError;
-use crate::app::service::DownloadService;
+use crate::app::service::{DownloadIter, DownloadService};
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
@@ -79,10 +79,15 @@ where
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<Box<dyn Iterator<Item = Result<Download, AppError>> + '_>, AppError> {
+    ) -> Result<DownloadIter<'_>, AppError> {
         Ok(Box::new(
             self.repository
-                .list(status, from, after, order)?
+                .list(
+                    status,
+                    from,
+                    after.map(Cursor::from).unwrap_or(Cursor::None),
+                    order,
+                )?
                 .map(|download| download.map_err(AppError::from)),
         ))
     }
@@ -179,21 +184,34 @@ where
         let downloading_iter = self.repository.list(
             Some(DownloadStatus::Downloading),
             None,
-            None,
+            Cursor::None,
             SortOrder::Asc,
         )?;
-        let submitted_iter =
-            self.repository
-                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
-        Ok(downloading_iter.chain(submitted_iter))
+        let submitted_iter = self.repository.list(
+            Some(DownloadStatus::Submitted),
+            None,
+            Cursor::None,
+            SortOrder::Asc,
+        )?;
+        Ok(downloading_iter.chain(submitted_iter).map(|r| match r {
+            Ok(e) => Ok(e.record),
+            Err(e) => Err(e),
+        }))
     }
 
     async fn import_downloads(&self, token: &CancellationToken) {
         let importing = match self
             .repository
-            .list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc)
-            .and_then(|iter| iter.collect::<Result<Vec<_>, RepositoryError>>())
-        {
+            .list(
+                Some(DownloadStatus::Importing),
+                None,
+                Cursor::None,
+                SortOrder::Asc,
+            )
+            .and_then(|iter| {
+                iter.map(|r| r.map(|e| e.record))
+                    .collect::<Result<Vec<_>, RepositoryError>>()
+            }) {
             Ok(downloads) => downloads,
             Err(e) => {
                 tracing::error!("Failed to get importing downloads: {e}");
@@ -269,6 +287,7 @@ mod tests {
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
     use async_trait::async_trait;
+    use collette::iter::Entry;
     use std::sync::Mutex;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
@@ -349,7 +368,7 @@ mod tests {
     struct RecordedListCall {
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Option<DownloadCursor>,
+        after: Cursor,
         order: SortOrder,
     }
 
@@ -375,9 +394,9 @@ mod tests {
             &self,
             status: Option<DownloadStatus>,
             from: Option<chrono::DateTime<chrono::Utc>>,
-            after: Option<DownloadCursor>,
+            after: Cursor,
             order: SortOrder,
-        ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>>, RepositoryError>
+        ) -> Result<impl Iterator<Item = Result<Entry<Download>, RepositoryError>>, RepositoryError>
         {
             *self.last_call.lock().unwrap() = Some(RecordedListCall {
                 status,
@@ -385,7 +404,12 @@ mod tests {
                 after,
                 order,
             });
-            Ok(Box::new(self.downloads.clone().into_iter().map(Ok)))
+            Ok(self.downloads.clone().into_iter().map(|record| {
+                Ok(Entry {
+                    key: Cursor::from_key(record.info_hash.as_str()),
+                    record,
+                })
+            }))
         }
 
         fn update(&self, _download: &Download) -> Result<(), RepositoryError> {
@@ -462,7 +486,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(downloads.len(), 1);
-        assert_eq!(downloads[0].status, DownloadStatus::Queued);
+        assert_eq!(downloads[0].record.status, DownloadStatus::Queued);
     }
 
     #[test]
@@ -475,11 +499,7 @@ mod tests {
             PathBuf::from("/downloads"),
         );
 
-        let after = DownloadCursor {
-            status: DownloadStatus::Queued,
-            created_at: chrono::Utc::now(),
-            info_hash: INFO_HASH.to_owned(),
-        };
+        let after = DownloadCursor::new(vec![1, 2, 3]);
 
         app.downloads(
             Some(DownloadStatus::Queued),
@@ -495,7 +515,7 @@ mod tests {
             Some(RecordedListCall {
                 status: Some(DownloadStatus::Queued),
                 from: None,
-                after: Some(after),
+                after: Cursor::from(after),
                 order: SortOrder::Asc,
             })
         );
