@@ -13,7 +13,7 @@ concurrency:
 
 jobs:
   test-rustdoc:
-    name: Test rustdoc
+    name: Test (Rustdoc)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -26,7 +26,7 @@ jobs:
         run: make test-doc
 
   test-rust:
-    name: Test rust
+    name: Test (Rust)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
