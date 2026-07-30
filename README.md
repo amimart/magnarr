@@ -10,9 +10,9 @@ Magnarr is a lightweight magnet-based download orchestrator.
 
 It focuses only on:
 
-- ingesting magnet links
-- tracking torrent downloads
-- importing completed files
+- Ingesting magnet links
+- Tracking torrent downloads
+- Importing completed files
 
 >🚧 **WARNING**: Magnarr is not mature enough to be considered production-grade. Its API may change without notice. But feedbacks are welcomed 😉
 
@@ -87,7 +87,18 @@ so, use the published Magnarr image, pin image versions, replace the development
 credentials, choose persistent host paths, and protect the exposed interfaces.
 Magnarr and qBittorrent must retain access to the same download directory.
 
-## Configuration
+## Usage
+
+Initialize Magnarr before starting the service:
+
+```shell
+magnarr init
+magnarr start
+```
+
+The `init` command creates Magnarr's home directory, writes a default
+`config.yaml`, and initializes the embedded database. The `start` command then
+loads this configuration and launches the service.
 
 Magnarr keeps its configuration and internal data in a home directory. It uses
 `~/.magnarr` by default; another location can be selected with `--home` or the
@@ -95,42 +106,7 @@ Magnarr keeps its configuration and internal data in a home directory. It uses
 
 ```shell
 magnarr --home /srv/magnarr init
+magnarr --home /srv/magnarr start
 ```
 
-The `init` command creates the home directory, writes a default `config.yaml`,
-and initializes the Redb database. It expects the selected home directory not
-to exist yet, to avoid overwriting an existing installation.
-
-Magnarr reads `<home>/config.yaml` when it starts. Relative paths in the
-configuration, including the download directory and database path, are resolved
-from the home directory. Absolute paths are used unchanged.
-
-```yaml
-app:
-  poll_interval: 30s
-  download_dir: ./download
-server:
-  listen_addr: localhost:9393
-  max_page_size: 100
-store:
-  path: ./data/magnarr.redb
-torrent_client:
-  qbittorrent:
-    host: http://localhost:8080
-    username: admin
-    password: adminadmin
-```
-
-The main settings are:
-
-- `app.poll_interval`: how often torrent states are refreshed;
-- `app.download_dir`: where qBittorrent stores completed downloads;
-- `server.listen_addr`: address used by the GraphQL HTTP server;
-- `server.max_page_size`: maximum number of downloads returned per page;
-- `store.path`: location of the Redb database;
-- `torrent_client.qbittorrent`: qBittorrent URL and credentials.
-
-Configuration is applied in this order, with later sources taking precedence:
-compiled defaults, `config.yaml`, `MAGNARR_*` environment variables, then
-options passed to `magnarr start`. Run `magnarr start --help` to see the
-available command-line overrides.
+The configuration can be overridden through cmd flags.
