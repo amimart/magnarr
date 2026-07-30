@@ -84,10 +84,6 @@ function updateCargoLockVersion(version) {
   const packagePattern = /(\[\[package\]\]\nname = "magnarr"\nversion = ")[^"]+(")/;
   const updated = lockfile.replace(packagePattern, `$1${version}$2`);
 
-  if (updated === lockfile) {
-    throw new Error("Could not update magnarr package version in Cargo.lock");
-  }
-
   writeFileSync(cargoLockPath, updated);
 }
 
