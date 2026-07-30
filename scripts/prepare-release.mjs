@@ -70,10 +70,6 @@ function updateCargoTomlVersion(version) {
     `version = "${version}"`,
   );
 
-  if (updated === manifest) {
-    throw new Error("Could not update package version in Cargo.toml");
-  }
-
   writeFileSync(cargoTomlPath, updated);
 }
 
