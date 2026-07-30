@@ -39,6 +39,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: graphql-hive/graphql-inspector@master
+      - name: Inspect schema changes
+        id: schema-diff
+        continue-on-error: true
+        uses: graphql-hive/graphql-inspector@master
         with:
           schema: 'main:schema.graphql'
+
+      - name: Require a breaking-change commit
+        if: steps.schema-diff.outcome == 'failure'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const commits = await github.paginate(
+              github.rest.pulls.listCommits,
+              {
+                owner,
+                repo,
+                pull_number: context.payload.pull_request.number,
+                per_page: 100,
+              },
+            );
+
+            const marker =
+              /(^[a-z]+(?:\([^)]+\))?!:\s|^BREAKING[ -]CHANGE:)/m;
+            const breakingCommit = commits.find((commit) =>
+              marker.test(commit.commit.message)
+            );
+
+            if (!breakingCommit) {
+              core.setFailed(
+                "The GraphQL schema contains breaking changes, but no " +
+                "commit has a breaking-change marker (`type!:` or " +
+                "`BREAKING CHANGE:`).",
+              );
+            } else {
+              core.notice(
+                `Breaking changes acknowledged by commit ${breakingCommit.sha}.`,
+              );
+            }

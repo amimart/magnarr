@@ -2,7 +2,11 @@
 name = "magnarr"
 version = "0.1.0"
 edition = "2021"
-description = "magnarr CLI"
+description = "Magnet-based torrent download orchestrator"
+license = "MIT"
+repository = "https://github.com/amimart/magnarr"
+readme = "README.md"
+keywords = ["torrent", "automation", "servarr"]
 
 [[bin]]
 name = "magnarr"
