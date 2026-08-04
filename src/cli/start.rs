@@ -67,7 +67,7 @@ pub async fn run(home: &Path, args: StartArgs) {
                 host: qb.host,
                 username: qb.username,
                 password: qb.password,
-            })) as Arc<dyn crate::app::torrent::TorrentClient>
+            }))
         }
     };
 

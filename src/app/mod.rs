@@ -15,20 +15,22 @@ use crate::app::service::{DownloadIter, DownloadService};
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
-pub struct App<R>
+pub struct App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     repository: Arc<R>,
-    torrent_client: Arc<dyn TorrentClient>,
+    torrent_client: Arc<T>,
     poll_interval: Duration,
     /// Directory where the torrent client saves completed downloads.
     download_dir: PathBuf,
 }
 
-impl<R> Clone for App<R>
+impl<R, T> Clone for App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         Self {
@@ -41,9 +43,10 @@ where
 }
 
 #[async_trait::async_trait]
-impl<R> DownloadService for App<R>
+impl<R, T> DownloadService for App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
         match self.repository.get(magnet.info_hash()) {
@@ -93,13 +96,14 @@ where
     }
 }
 
-impl<R> App<R>
+impl<R, T> App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     pub fn new(
         repository: Arc<R>,
-        torrent_client: Arc<dyn TorrentClient>,
+        torrent_client: Arc<T>,
         poll_interval: Duration,
         download_dir: PathBuf,
     ) -> Self {
@@ -345,7 +349,10 @@ mod tests {
 
     /// Creates an `App` backed by a real `RedbStore` in a temporary directory.
     /// The returned `TempDir` must be kept alive for the duration of the test.
-    fn new_app(client: Arc<dyn TorrentClient>) -> (App<RedbStore>, tempfile::TempDir) {
+    fn new_app<T>(client: Arc<T>) -> (App<RedbStore, T>, tempfile::TempDir)
+    where
+        T: TorrentClient + Send + Sync + 'static,
+    {
         let dir = tempfile::tempdir().unwrap();
         let download_dir = dir.path().join("downloads");
         std::fs::create_dir_all(&download_dir).unwrap();
