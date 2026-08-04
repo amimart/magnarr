@@ -1,4 +1,5 @@
 use crate::app::download::DownloadCursor;
+use crate::app::service::DownloadService;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::{Download, DownloadStatus, SortOrder};
 use crate::graphql::GraphqlContext;
@@ -6,13 +7,23 @@ use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Error, Object, Schema};
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use std::marker::PhantomData;
 
-pub type AppSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+pub type AppSchema<S> = Schema<QueryRoot<S>, MutationRoot<S>, EmptySubscription>;
 
-pub struct QueryRoot;
+pub struct QueryRoot<S>(PhantomData<S>);
+
+impl<S> Default for QueryRoot<S> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 #[Object]
-impl QueryRoot {
+impl<S> QueryRoot<S>
+where
+    S: DownloadService + 'static,
+{
     /// Health check — returns "ok" when the server is running.
     async fn health(&self) -> &str {
         "ok"
@@ -27,7 +38,7 @@ impl QueryRoot {
         #[graphql(default = 50)] first: i32,
         order: Option<SortOrder>,
     ) -> async_graphql::Result<Connection<String, Download, EmptyFields, EmptyFields>> {
-        let ctx = ctx.data::<GraphqlContext>()?;
+        let ctx = ctx.data::<GraphqlContext<S>>()?;
         let after = after.as_deref().map(decode_downloads_cursor).transpose()?;
         let limit =
             usize::try_from(first).map_err(|_| Error::new("`first` must be non-negative"))?;
@@ -60,10 +71,19 @@ impl QueryRoot {
     }
 }
 
-pub struct MutationRoot;
+pub struct MutationRoot<S>(PhantomData<S>);
+
+impl<S> Default for MutationRoot<S> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
 
 #[Object]
-impl MutationRoot {
+impl<S> MutationRoot<S>
+where
+    S: DownloadService + 'static,
+{
     /// Submits a new download: validates the magnet, persists it, and hands it
     /// off to the torrent client. Returns the created download record.
     async fn download(
@@ -72,23 +92,37 @@ impl MutationRoot {
         magnet: MagnetUri,
         target_dir: String,
     ) -> async_graphql::Result<Download> {
-        let ctx = ctx.data::<GraphqlContext>()?;
+        let ctx = ctx.data::<GraphqlContext<S>>()?;
         let dl = ctx.app.download(magnet.0, target_dir).await?;
         Ok(dl.into())
     }
 }
 
-pub fn build_schema(ctx: GraphqlContext) -> AppSchema {
-    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
-        .data(ctx)
-        .finish()
+pub fn build_schema<S>(ctx: GraphqlContext<S>) -> AppSchema<S>
+where
+    S: DownloadService + 'static,
+{
+    Schema::build(
+        QueryRoot::default(),
+        MutationRoot::default(),
+        EmptySubscription,
+    )
+    .data(ctx)
+    .finish()
 }
 
 /// Builds the schema without runtime data, used for SDL export.
-pub fn build_schema_sdl() -> String {
-    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
-        .finish()
-        .sdl()
+pub fn build_schema_sdl<S>() -> String
+where
+    S: DownloadService + 'static,
+{
+    Schema::build(
+        QueryRoot::<S>::default(),
+        MutationRoot::<S>::default(),
+        EmptySubscription,
+    )
+    .finish()
+    .sdl()
 }
 
 fn encode_downloads_cursor(cursor: DownloadCursor) -> String {
@@ -232,7 +266,10 @@ mod tests {
         })
     }
 
-    fn build_test_schema(service: Arc<dyn DownloadService>, max_page_size: usize) -> AppSchema {
+    fn build_test_schema<S>(service: Arc<S>, max_page_size: usize) -> AppSchema<S>
+    where
+        S: DownloadService + 'static,
+    {
         build_schema(GraphqlContext {
             app: service,
             max_page_size,

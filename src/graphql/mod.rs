@@ -13,17 +13,23 @@ use std::sync::Arc;
 use crate::app::service::DownloadService;
 use crate::graphql::schema::{build_schema, AppSchema};
 
-pub struct GraphqlServer {
-    schema: AppSchema,
+pub struct GraphqlServer<S>
+where
+    S: DownloadService + 'static,
+{
+    schema: AppSchema<S>,
 }
 
-pub struct GraphqlContext {
-    pub app: Arc<dyn DownloadService>,
+pub struct GraphqlContext<S> {
+    pub app: Arc<S>,
     pub max_page_size: usize,
 }
 
-impl GraphqlServer {
-    pub fn new(app: Arc<dyn DownloadService>, max_page_size: usize) -> Self {
+impl<S> GraphqlServer<S>
+where
+    S: DownloadService + 'static,
+{
+    pub fn new(app: Arc<S>, max_page_size: usize) -> Self {
         Self {
             schema: build_schema(GraphqlContext { app, max_page_size }),
         }
@@ -37,7 +43,13 @@ impl GraphqlServer {
     }
 }
 
-async fn graphql_handler(State(schema): State<AppSchema>, req: GraphQLRequest) -> GraphQLResponse {
+async fn graphql_handler<S>(
+    State(schema): State<AppSchema<S>>,
+    req: GraphQLRequest,
+) -> GraphQLResponse
+where
+    S: DownloadService + 'static,
+{
     schema.execute(req.into_inner()).await.into()
 }
 
