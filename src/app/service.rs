@@ -1,4 +1,4 @@
-use crate::app::download::{DownloadCursor, SortOrder};
+use crate::app::download::{DownloadCursor, RepositoryError, SortOrder};
 use crate::app::error::AppError;
 use crate::types::{Download, DownloadStatus, Magnet};
 use async_trait::async_trait;
@@ -6,6 +6,10 @@ use collette::iter::Entry;
 
 #[async_trait]
 pub trait DownloadService: Send + Sync {
+    type Iter<'a>: Iterator<Item = Result<Entry<Download>, AppError>> + 'a
+    where
+        Self: 'a;
+
     /// Submits a new download: persists it as `Queued`, sends the magnet to the
     /// torrent client, then transitions to `Submitted`. If the client rejects the
     /// magnet the record is deleted (rollback) and an error is returned.
@@ -17,7 +21,28 @@ pub trait DownloadService: Send + Sync {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<DownloadIter<'_>, AppError>;
+    ) -> Result<Self::Iter<'_>, AppError>;
 }
 
-pub type DownloadIter<'a> = Box<dyn Iterator<Item = Result<Entry<Download>, AppError>> + 'a>;
+pub struct DownloadIter<I> {
+    inner: I,
+}
+
+impl<I> DownloadIter<I> {
+    pub fn new(inner: I) -> Self {
+        Self { inner }
+    }
+}
+
+impl<I> Iterator for DownloadIter<I>
+where
+    I: Iterator<Item = Result<Entry<Download>, RepositoryError>>,
+{
+    type Item = Result<Entry<Download>, AppError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|result| result.map_err(AppError::from))
+    }
+}

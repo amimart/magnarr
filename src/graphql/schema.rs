@@ -144,7 +144,7 @@ mod tests {
     use super::*;
     use crate::app::download::SortOrder as AppSortOrder;
     use crate::app::error::AppError;
-    use crate::app::service::{DownloadIter, DownloadService};
+    use crate::app::service::DownloadService;
     use crate::types::DownloadStatus as DomainDownloadStatus;
     use crate::types::{Download as DomainDownload, Magnet};
     use async_graphql::Request;
@@ -174,6 +174,8 @@ mod tests {
 
     #[async_trait]
     impl DownloadService for MockDownloadService {
+        type Iter<'a> = std::vec::IntoIter<Result<Entry<DomainDownload>, AppError>>;
+
         async fn download(
             &self,
             _magnet: Magnet,
@@ -188,7 +190,7 @@ mod tests {
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
             order: AppSortOrder,
-        ) -> Result<DownloadIter<'_>, AppError> {
+        ) -> Result<Self::Iter<'_>, AppError> {
             *self.last_downloads_call.lock().unwrap() = Some(DownloadsCall {
                 status,
                 from,
@@ -240,7 +242,7 @@ mod tests {
                 }
             }
 
-            Ok(Box::new(entries.into_iter().map(Ok)))
+            Ok(entries.into_iter().map(Ok).collect::<Vec<_>>().into_iter())
         }
     }
 

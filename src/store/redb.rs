@@ -1,8 +1,8 @@
 use crate::app::download::{DownloadRepository, RepositoryError, SortOrder};
 use crate::types::{Download, DownloadStatus};
-use collette::backend::redb::RedbMultiStore;
+use collette::backend::redb::{RedbMultiStore, RedbReadStore};
 use collette::index_registry::{Cons, Nil};
-use collette::iter::Entry;
+use collette::iter::{Entry, IndexIterator};
 use collette::{
     impl_enum_key, Collection, Cursor, Error, Index, Item, Multi, PrefixableScan, Scan,
 };
@@ -82,6 +82,20 @@ pub struct RedbStore {
     db: Collection<RedbMultiStore, Download, Cons<StatusAndCreatedAt, Cons<CreatedAt, Nil>>>,
 }
 
+pub struct RedbDownloadIter {
+    inner: IndexIterator<RedbReadStore, Download>,
+}
+
+impl Iterator for RedbDownloadIter {
+    type Item = Result<Entry<Download>, RepositoryError>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner
+            .next()
+            .map(|result| result.map_err(RepositoryError::from))
+    }
+}
+
 impl RedbStore {
     pub fn new(path: PathBuf) -> Result<Self, RepositoryError> {
         if let Some(parent) = path.parent() {
@@ -117,6 +131,8 @@ impl From<Error> for RepositoryError {
 }
 
 impl DownloadRepository for RedbStore {
+    type Iter<'a> = RedbDownloadIter;
+
     fn insert(&self, download: &Download) -> Result<(), RepositoryError> {
         self.db.insert(download).map_err(RepositoryError::from)
     }
@@ -137,9 +153,8 @@ impl DownloadRepository for RedbStore {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Cursor,
         order: SortOrder,
-    ) -> Result<impl Iterator<Item = Result<Entry<Download>, RepositoryError>>, RepositoryError>
-    {
-        Ok(match (status, from) {
+    ) -> Result<Self::Iter<'_>, RepositoryError> {
+        let inner = match (status, from) {
             (Some(status), Some(from)) => self
                 .db
                 .index_scan(StatusAndCreatedAt)
@@ -170,8 +185,8 @@ impl DownloadRepository for RedbStore {
                 .direction(order.into())
                 .after(after)
                 .iter()?,
-        }
-        .map(|r| r.map_err(RepositoryError::from)))
+        };
+        Ok(RedbDownloadIter { inner })
     }
 
     fn update(&self, download: &Download) -> Result<(), RepositoryError> {
