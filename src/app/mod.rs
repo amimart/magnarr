@@ -15,20 +15,22 @@ use crate::app::service::{DownloadIter, DownloadService};
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
 
-pub struct App<R>
+pub struct App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     repository: Arc<R>,
-    torrent_client: Arc<dyn TorrentClient>,
+    torrent_client: Arc<T>,
     poll_interval: Duration,
     /// Directory where the torrent client saves completed downloads.
     download_dir: PathBuf,
 }
 
-impl<R> Clone for App<R>
+impl<R, T> Clone for App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     fn clone(&self) -> Self {
         Self {
@@ -41,10 +43,16 @@ where
 }
 
 #[async_trait::async_trait]
-impl<R> DownloadService for App<R>
+impl<R, T> DownloadService for App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
+    type Iter<'a>
+        = DownloadIter<R::Iter<'a>>
+    where
+        Self: 'a;
+
     async fn download(&self, magnet: Magnet, target_dir: String) -> Result<Download, AppError> {
         match self.repository.get(magnet.info_hash()) {
             Ok(_) => Err(AppError::AlreadyExists),
@@ -79,27 +87,24 @@ where
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
-    ) -> Result<DownloadIter<'_>, AppError> {
-        Ok(Box::new(
-            self.repository
-                .list(
-                    status,
-                    from,
-                    after.map(Cursor::from).unwrap_or(Cursor::None),
-                    order,
-                )?
-                .map(|download| download.map_err(AppError::from)),
-        ))
+    ) -> Result<Self::Iter<'_>, AppError> {
+        Ok(DownloadIter::new(self.repository.list(
+            status,
+            from,
+            after.map(Cursor::from).unwrap_or(Cursor::None),
+            order,
+        )?))
     }
 }
 
-impl<R> App<R>
+impl<R, T> App<R, T>
 where
     R: DownloadRepository + Send + Sync + 'static,
+    T: TorrentClient + Send + Sync + 'static,
 {
     pub fn new(
         repository: Arc<R>,
-        torrent_client: Arc<dyn TorrentClient>,
+        torrent_client: Arc<T>,
         poll_interval: Duration,
         download_dir: PathBuf,
     ) -> Self {
@@ -345,7 +350,10 @@ mod tests {
 
     /// Creates an `App` backed by a real `RedbStore` in a temporary directory.
     /// The returned `TempDir` must be kept alive for the duration of the test.
-    fn new_app(client: Arc<dyn TorrentClient>) -> (App<RedbStore>, tempfile::TempDir) {
+    fn new_app<T>(client: Arc<T>) -> (App<RedbStore, T>, tempfile::TempDir)
+    where
+        T: TorrentClient + Send + Sync + 'static,
+    {
         let dir = tempfile::tempdir().unwrap();
         let download_dir = dir.path().join("downloads");
         std::fs::create_dir_all(&download_dir).unwrap();
@@ -382,6 +390,8 @@ mod tests {
     }
 
     impl DownloadRepository for PagingRepository {
+        type Iter<'a> = std::vec::IntoIter<Result<Entry<Download>, RepositoryError>>;
+
         fn insert(&self, _download: &Download) -> Result<(), RepositoryError> {
             unimplemented!()
         }
@@ -396,20 +406,25 @@ mod tests {
             from: Option<chrono::DateTime<chrono::Utc>>,
             after: Cursor,
             order: SortOrder,
-        ) -> Result<impl Iterator<Item = Result<Entry<Download>, RepositoryError>>, RepositoryError>
-        {
+        ) -> Result<Self::Iter<'_>, RepositoryError> {
             *self.last_call.lock().unwrap() = Some(RecordedListCall {
                 status,
                 from,
                 after,
                 order,
             });
-            Ok(self.downloads.clone().into_iter().map(|record| {
-                Ok(Entry {
-                    key: Cursor::from_key(record.info_hash.as_str()),
-                    record,
+            Ok(self
+                .downloads
+                .clone()
+                .into_iter()
+                .map(|record| {
+                    Ok(Entry {
+                        key: Cursor::from_key(record.info_hash.as_str()),
+                        record,
+                    })
                 })
-            }))
+                .collect::<Vec<_>>()
+                .into_iter())
         }
 
         fn update(&self, _download: &Download) -> Result<(), RepositoryError> {

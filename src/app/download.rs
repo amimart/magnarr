@@ -63,6 +63,10 @@ pub enum RepositoryError {
 }
 
 pub trait DownloadRepository: Send + Sync {
+    type Iter<'a>: Iterator<Item = Result<Entry<Download>, RepositoryError>> + 'a
+    where
+        Self: 'a;
+
     fn insert(&self, download: &Download) -> Result<(), RepositoryError>;
     fn get(&self, info_hash: &str) -> Result<Download, RepositoryError>;
     fn list(
@@ -71,7 +75,7 @@ pub trait DownloadRepository: Send + Sync {
         from: Option<chrono::DateTime<chrono::Utc>>,
         after: Cursor,
         order: SortOrder,
-    ) -> Result<impl Iterator<Item = Result<Entry<Download>, RepositoryError>>, RepositoryError>;
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
     fn update(&self, download: &Download) -> Result<(), RepositoryError>;
     fn remove(&self, info_hash: &str) -> Result<(), RepositoryError>;
 }
