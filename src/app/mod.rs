@@ -1,5 +1,5 @@
-pub mod repository;
 pub mod error;
+pub mod repository;
 pub mod service;
 pub mod torrent;
 
@@ -8,8 +8,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::repository::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::app::error::AppError;
+use crate::app::repository::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::app::service::{DownloadIter, DownloadService};
 use crate::app::torrent::{TorrentClient, TorrentClientError};
 use crate::types::{Download, DownloadStatus, Magnet, TorrentState};
@@ -280,7 +280,7 @@ mod tests {
     use super::*;
     use crate::app::repository::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
     use crate::app::torrent::TorrentClientError;
-    use crate::store::redb::RedbStore;
+    use crate::store::DownloadStore;
     use crate::types::{TorrentState, TorrentStatus};
     use async_trait::async_trait;
     use std::sync::Mutex;
@@ -338,16 +338,16 @@ mod tests {
         }
     }
 
-    /// Creates an `App` backed by a real `RedbStore` in a temporary directory.
+    /// Creates an `App` backed by a real `DownloadStore` in a temporary directory.
     /// The returned `TempDir` must be kept alive for the duration of the test.
-    fn new_app<T>(client: Arc<T>) -> (App<RedbStore, T>, tempfile::TempDir)
+    fn new_app<T>(client: Arc<T>) -> (App<DownloadStore, T>, tempfile::TempDir)
     where
         T: TorrentClient + Send + Sync + 'static,
     {
         let dir = tempfile::tempdir().unwrap();
         let download_dir = dir.path().join("downloads");
         std::fs::create_dir_all(&download_dir).unwrap();
-        let store = RedbStore::new(dir.path().join("test.redb")).unwrap();
+        let store = DownloadStore::new(dir.path().join("test.redb")).unwrap();
         let app = App::new(
             Arc::new(store),
             client,

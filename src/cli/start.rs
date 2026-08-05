@@ -9,7 +9,7 @@ use crate::cli::config::{load_config, TorrentClientConfig};
 use crate::cli::PathArg;
 use crate::client::qbittorrent::{QbittorrentClient, QbittorrentConfig as QbConnectionConfig};
 use crate::graphql::GraphqlServer;
-use crate::store::redb::RedbStore;
+use crate::store::DownloadStore;
 
 #[derive(Default, Debug, serde::Serialize, clap::Parser)]
 pub struct StartArgs {
@@ -53,7 +53,7 @@ pub async fn run(home: &Path, args: StartArgs) {
     let store_path = cfg.store.resolve_path(home);
     tracing::info!(store_path = %store_path.display(), "Store path");
 
-    let repo = match RedbStore::new(store_path) {
+    let repo = match DownloadStore::new(store_path) {
         Ok(r) => r,
         Err(e) => {
             tracing::error!("Failed to open repository: {e}");

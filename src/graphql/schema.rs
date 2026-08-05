@@ -142,8 +142,8 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::app::repository::{DownloadEntry, SortOrder as AppSortOrder};
     use crate::app::error::AppError;
+    use crate::app::repository::{DownloadEntry, SortOrder as AppSortOrder};
     use crate::app::service::DownloadService;
     use crate::types::DownloadStatus as DomainDownloadStatus;
     use crate::types::{Download as DomainDownload, Magnet};

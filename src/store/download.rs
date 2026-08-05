@@ -89,15 +89,15 @@ impl Index<Download> for StatusAndCreatedAt {
     }
 }
 
-pub struct RedbStore {
+pub struct DownloadStore {
     db: Collection<RedbMultiStore, Download, Cons<StatusAndCreatedAt, Cons<CreatedAt, Nil>>>,
 }
 
-pub struct RedbDownloadIter {
+pub struct DownloadScanIter {
     inner: IndexIterator<RedbReadStore, Download>,
 }
 
-impl Iterator for RedbDownloadIter {
+impl Iterator for DownloadScanIter {
     type Item = Result<DownloadEntry, RepositoryError>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -120,7 +120,7 @@ impl Iterator for RedbDownloadIter {
     }
 }
 
-impl RedbStore {
+impl DownloadStore {
     pub fn new(path: PathBuf) -> Result<Self, RepositoryError> {
         if let Some(parent) = path.parent() {
             if !parent.as_os_str().is_empty() {
@@ -154,8 +154,8 @@ impl From<Error> for RepositoryError {
     }
 }
 
-impl DownloadRepository for RedbStore {
-    type Iter<'a> = RedbDownloadIter;
+impl DownloadRepository for DownloadStore {
+    type Iter<'a> = DownloadScanIter;
 
     fn insert(&self, download: &Download) -> Result<(), RepositoryError> {
         self.db.insert(download).map_err(RepositoryError::from)
@@ -182,7 +182,7 @@ impl DownloadRepository for RedbStore {
             .direction(order.into())
             .after(to_collette_cursor(after))
             .iter()?;
-        Ok(RedbDownloadIter { inner })
+        Ok(DownloadScanIter { inner })
     }
 
     fn scan_by_status(
@@ -199,7 +199,7 @@ impl DownloadRepository for RedbStore {
             .direction(order.into())
             .after(to_collette_cursor(after))
             .iter()?;
-        Ok(RedbDownloadIter { inner })
+        Ok(DownloadScanIter { inner })
     }
 
     fn scan_since(
@@ -215,7 +215,7 @@ impl DownloadRepository for RedbStore {
             .direction(order.into())
             .after(to_collette_cursor(after))
             .iter()?;
-        Ok(RedbDownloadIter { inner })
+        Ok(DownloadScanIter { inner })
     }
 
     fn scan_by_status_since(
@@ -234,7 +234,7 @@ impl DownloadRepository for RedbStore {
             .direction(order.into())
             .after(to_collette_cursor(after))
             .iter()?;
-        Ok(RedbDownloadIter { inner })
+        Ok(DownloadScanIter { inner })
     }
 
     fn update(&self, download: &Download) -> Result<(), RepositoryError> {
@@ -263,10 +263,10 @@ mod tests {
     const MAGNET2: &str = "magnet:?xt=urn:btih:FEDCBA0987654321FEDCBA0987654321FEDCBA09&dn=test2";
     const MAGNET3: &str = "magnet:?xt=urn:btih:1111111111111111111111111111111111111111&dn=test3";
 
-    fn new_store() -> (RedbStore, tempfile::TempDir) {
+    fn new_store() -> (DownloadStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.redb");
-        let store = RedbStore::new(path).unwrap();
+        let store = DownloadStore::new(path).unwrap();
         (store, dir)
     }
 
