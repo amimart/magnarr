@@ -49,10 +49,27 @@ pub trait DownloadRepository: Send + Sync {
 
     fn insert(&self, download: &Download) -> Result<(), RepositoryError>;
     fn get(&self, info_hash: &str) -> Result<Download, RepositoryError>;
-    fn list(
+    fn scan_all(
         &self,
-        status: Option<DownloadStatus>,
-        from: Option<chrono::DateTime<chrono::Utc>>,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
+    fn scan_by_status(
+        &self,
+        status: DownloadStatus,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
+    fn scan_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
+    fn scan_by_status_since(
+        &self,
+        status: DownloadStatus,
+        since: chrono::DateTime<chrono::Utc>,
         after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, RepositoryError>;

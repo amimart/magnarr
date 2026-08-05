@@ -171,48 +171,69 @@ impl DownloadRepository for RedbStore {
             })
     }
 
-    fn list(
+    fn scan_all(
         &self,
-        status: Option<DownloadStatus>,
-        from: Option<chrono::DateTime<chrono::Utc>>,
         after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, RepositoryError> {
-        let after = after
-            .map(|cursor| Cursor::Key(cursor.as_ref().to_vec().into()))
-            .unwrap_or(Cursor::None);
-        let inner = match (status, from) {
-            (Some(status), Some(from)) => self
-                .db
-                .index_scan(StatusAndCreatedAt)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                .prefix(status)
-                .range(from.timestamp_micros()..)
-                .direction(order.into())
-                .after(after)
-                .iter()?,
-            (Some(status), None) => self
-                .db
-                .index_scan(StatusAndCreatedAt)
-                .map_err(|e| RepositoryError::Storage(e.to_string()))?
-                .prefix(status)
-                .direction(order.into())
-                .after(after)
-                .iter()?,
-            (None, Some(from)) => self
-                .db
-                .index_scan(CreatedAt)?
-                .range((from.timestamp_micros(),)..)
-                .direction(order.into())
-                .after(after)
-                .iter()?,
-            (None, None) => self
-                .db
-                .index_scan(CreatedAt)?
-                .direction(order.into())
-                .after(after)
-                .iter()?,
-        };
+        let inner = self
+            .db
+            .index_scan(CreatedAt)?
+            .direction(order.into())
+            .after(to_collette_cursor(after))
+            .iter()?;
+        Ok(RedbDownloadIter { inner })
+    }
+
+    fn scan_by_status(
+        &self,
+        status: DownloadStatus,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError> {
+        let inner = self
+            .db
+            .index_scan(StatusAndCreatedAt)
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?
+            .prefix(status)
+            .direction(order.into())
+            .after(to_collette_cursor(after))
+            .iter()?;
+        Ok(RedbDownloadIter { inner })
+    }
+
+    fn scan_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError> {
+        let inner = self
+            .db
+            .index_scan(CreatedAt)?
+            .range((since.timestamp_micros(),)..)
+            .direction(order.into())
+            .after(to_collette_cursor(after))
+            .iter()?;
+        Ok(RedbDownloadIter { inner })
+    }
+
+    fn scan_by_status_since(
+        &self,
+        status: DownloadStatus,
+        since: chrono::DateTime<chrono::Utc>,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError> {
+        let inner = self
+            .db
+            .index_scan(StatusAndCreatedAt)
+            .map_err(|e| RepositoryError::Storage(e.to_string()))?
+            .prefix(status)
+            .range(since.timestamp_micros()..)
+            .direction(order.into())
+            .after(to_collette_cursor(after))
+            .iter()?;
         Ok(RedbDownloadIter { inner })
     }
 
@@ -225,6 +246,12 @@ impl DownloadRepository for RedbStore {
             .remove(info_hash.to_owned())
             .map_err(RepositoryError::from)
     }
+}
+
+fn to_collette_cursor(cursor: Option<DownloadCursor>) -> Cursor {
+    cursor
+        .map(|cursor| Cursor::Key(cursor.as_ref().to_vec().into()))
+        .unwrap_or(Cursor::None)
 }
 
 #[cfg(test)]
@@ -285,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn list_downloads_returns_newest_first_by_default() {
+    fn scan_all_returns_newest_first_by_default() {
         let (store, _dir) = new_store();
         let mut oldest = make_download(MAGNET1);
         oldest.created_at = Utc.timestamp_opt(10, 0).unwrap();
@@ -303,7 +330,7 @@ mod tests {
         store.insert(&newest).unwrap();
         store.insert(&middle).unwrap();
 
-        let downloads = collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap());
+        let downloads = collect_downloads(store.scan_all(None, SortOrder::Desc).unwrap());
 
         assert_eq!(
             downloads
@@ -319,7 +346,7 @@ mod tests {
     }
 
     #[test]
-    fn list_downloads_supports_status_filter_with_ordering() {
+    fn scan_by_status_filters_with_ordering() {
         let (store, _dir) = new_store();
         let mut queued = make_download(MAGNET1);
         queued.created_at = Utc.timestamp_opt(10, 0).unwrap();
@@ -341,7 +368,7 @@ mod tests {
 
         let downloads = collect_downloads(
             store
-                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Desc)
+                .scan_by_status(DownloadStatus::Submitted, None, SortOrder::Desc)
                 .unwrap(),
         );
 
@@ -351,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn list_downloads_supports_ascending_order() {
+    fn scan_all_supports_ascending_order() {
         let (store, _dir) = new_store();
         let mut first = make_download(MAGNET1);
         first.created_at = Utc.timestamp_opt(10, 0).unwrap();
@@ -364,14 +391,14 @@ mod tests {
         store.insert(&second).unwrap();
         store.insert(&first).unwrap();
 
-        let downloads = collect_downloads(store.list(None, None, None, SortOrder::Asc).unwrap());
+        let downloads = collect_downloads(store.scan_all(None, SortOrder::Asc).unwrap());
 
         assert_eq!(downloads[0].info_hash, first.info_hash);
         assert_eq!(downloads[1].info_hash, second.info_hash);
     }
 
     #[test]
-    fn list_downloads_supports_created_at_and_after_info_hash_cursor() {
+    fn scan_all_supports_cursor_pagination() {
         let (store, _dir) = new_store();
         let created_at = Utc.timestamp_opt(30, 0).unwrap();
 
@@ -392,7 +419,7 @@ mod tests {
         store.insert(&older).unwrap();
 
         let first_page = store
-            .list(None, None, None, SortOrder::Desc)
+            .scan_all(None, SortOrder::Desc)
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
@@ -400,12 +427,52 @@ mod tests {
 
         let downloads = collect_downloads(
             store
-                .list(None, None, Some(second_cursor), SortOrder::Desc)
+                .scan_all(Some(second_cursor), SortOrder::Desc)
                 .unwrap(),
         );
 
         assert_eq!(downloads.len(), 1);
         assert_eq!(downloads[0].info_hash, older.info_hash);
+    }
+
+    #[test]
+    fn scan_since_and_scan_by_status_since_apply_creation_lower_bound() {
+        let (store, _dir) = new_store();
+
+        let mut old_submitted = make_download(MAGNET1);
+        old_submitted.status = DownloadStatus::Submitted;
+        old_submitted.created_at = Utc.timestamp_opt(10, 0).unwrap();
+        old_submitted.updated_at = old_submitted.created_at;
+
+        let mut recent_queued = make_download(MAGNET2);
+        recent_queued.created_at = Utc.timestamp_opt(20, 0).unwrap();
+        recent_queued.updated_at = recent_queued.created_at;
+
+        let mut recent_submitted = make_download(MAGNET3);
+        recent_submitted.status = DownloadStatus::Submitted;
+        recent_submitted.created_at = Utc.timestamp_opt(30, 0).unwrap();
+        recent_submitted.updated_at = recent_submitted.created_at;
+
+        store.insert(&old_submitted).unwrap();
+        store.insert(&recent_queued).unwrap();
+        store.insert(&recent_submitted).unwrap();
+
+        let since = Utc.timestamp_opt(20, 0).unwrap();
+        let recent = collect_downloads(store.scan_since(since, None, SortOrder::Asc).unwrap());
+        let recent_submitted_downloads = collect_downloads(
+            store
+                .scan_by_status_since(DownloadStatus::Submitted, since, None, SortOrder::Asc)
+                .unwrap(),
+        );
+
+        assert_eq!(recent.len(), 2);
+        assert_eq!(recent[0].info_hash, recent_queued.info_hash);
+        assert_eq!(recent[1].info_hash, recent_submitted.info_hash);
+        assert_eq!(recent_submitted_downloads.len(), 1);
+        assert_eq!(
+            recent_submitted_downloads[0].info_hash,
+            recent_submitted.info_hash
+        );
     }
 
     #[test]
@@ -425,12 +492,7 @@ mod tests {
 
         let filtered = collect_downloads(
             store
-                .list(
-                    Some(DownloadStatus::Downloading),
-                    None,
-                    None,
-                    SortOrder::Desc,
-                )
+                .scan_by_status(DownloadStatus::Downloading, None, SortOrder::Desc)
                 .unwrap(),
         );
         assert_eq!(filtered.len(), 1);
@@ -448,12 +510,10 @@ mod tests {
             store.get(&dl.info_hash),
             Err(RepositoryError::NotFound)
         ));
-        assert!(
-            collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap(),).is_empty()
-        );
+        assert!(collect_downloads(store.scan_all(None, SortOrder::Desc).unwrap(),).is_empty());
         assert!(collect_downloads(
             store
-                .list(Some(DownloadStatus::Queued), None, None, SortOrder::Desc,)
+                .scan_by_status(DownloadStatus::Queued, None, SortOrder::Desc)
                 .unwrap(),
         )
         .is_empty());

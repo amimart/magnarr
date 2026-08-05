@@ -87,9 +87,15 @@ where
         after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, AppError> {
-        Ok(DownloadIter::new(
-            self.repository.list(status, from, after, order)?,
-        ))
+        let iter = match (status, from) {
+            (Some(status), Some(since)) => self
+                .repository
+                .scan_by_status_since(status, since, after, order)?,
+            (Some(status), None) => self.repository.scan_by_status(status, after, order)?,
+            (None, Some(since)) => self.repository.scan_since(since, after, order)?,
+            (None, None) => self.repository.scan_all(after, order)?,
+        };
+        Ok(DownloadIter::new(iter))
     }
 }
 
@@ -182,15 +188,12 @@ where
     fn get_pending_downloads(
         &self,
     ) -> Result<impl Iterator<Item = Result<Download, RepositoryError>> + '_, RepositoryError> {
-        let downloading_iter = self.repository.list(
-            Some(DownloadStatus::Downloading),
-            None,
-            None,
-            SortOrder::Asc,
-        )?;
+        let downloading_iter =
+            self.repository
+                .scan_by_status(DownloadStatus::Downloading, None, SortOrder::Asc)?;
         let submitted_iter =
             self.repository
-                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
+                .scan_by_status(DownloadStatus::Submitted, None, SortOrder::Asc)?;
         Ok(downloading_iter.chain(submitted_iter).map(|r| match r {
             Ok(e) => Ok(e.download),
             Err(e) => Err(e),
@@ -200,7 +203,7 @@ where
     async fn import_downloads(&self, token: &CancellationToken) {
         let importing = match self
             .repository
-            .list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc)
+            .scan_by_status(DownloadStatus::Importing, None, SortOrder::Asc)
             .and_then(|iter| {
                 iter.map(|r| r.map(|e| e.download))
                     .collect::<Result<Vec<_>, RepositoryError>>()
@@ -374,6 +377,32 @@ mod tests {
                 last_call: Mutex::new(None),
             }
         }
+
+        fn scan(
+            &self,
+            status: Option<DownloadStatus>,
+            from: Option<chrono::DateTime<chrono::Utc>>,
+            after: Option<DownloadCursor>,
+            order: SortOrder,
+        ) -> <Self as DownloadRepository>::Iter<'_> {
+            *self.last_call.lock().unwrap() = Some(RecordedListCall {
+                status,
+                from,
+                after,
+                order,
+            });
+            self.downloads
+                .clone()
+                .into_iter()
+                .map(|download| {
+                    Ok(DownloadEntry {
+                        cursor: DownloadCursor::new(download.info_hash.as_bytes().to_vec()),
+                        download,
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+        }
     }
 
     impl DownloadRepository for PagingRepository {
@@ -387,31 +416,40 @@ mod tests {
             unimplemented!()
         }
 
-        fn list(
+        fn scan_all(
             &self,
-            status: Option<DownloadStatus>,
-            from: Option<chrono::DateTime<chrono::Utc>>,
             after: Option<DownloadCursor>,
             order: SortOrder,
         ) -> Result<Self::Iter<'_>, RepositoryError> {
-            *self.last_call.lock().unwrap() = Some(RecordedListCall {
-                status,
-                from,
-                after,
-                order,
-            });
-            Ok(self
-                .downloads
-                .clone()
-                .into_iter()
-                .map(|download| {
-                    Ok(DownloadEntry {
-                        cursor: DownloadCursor::new(download.info_hash.as_bytes().to_vec()),
-                        download,
-                    })
-                })
-                .collect::<Vec<_>>()
-                .into_iter())
+            Ok(self.scan(None, None, after, order))
+        }
+
+        fn scan_by_status(
+            &self,
+            status: DownloadStatus,
+            after: Option<DownloadCursor>,
+            order: SortOrder,
+        ) -> Result<Self::Iter<'_>, RepositoryError> {
+            Ok(self.scan(Some(status), None, after, order))
+        }
+
+        fn scan_since(
+            &self,
+            since: chrono::DateTime<chrono::Utc>,
+            after: Option<DownloadCursor>,
+            order: SortOrder,
+        ) -> Result<Self::Iter<'_>, RepositoryError> {
+            Ok(self.scan(None, Some(since), after, order))
+        }
+
+        fn scan_by_status_since(
+            &self,
+            status: DownloadStatus,
+            since: chrono::DateTime<chrono::Utc>,
+            after: Option<DownloadCursor>,
+            order: SortOrder,
+        ) -> Result<Self::Iter<'_>, RepositoryError> {
+            Ok(self.scan(Some(status), Some(since), after, order))
         }
 
         fn update(&self, _download: &Download) -> Result<(), RepositoryError> {
