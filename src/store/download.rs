@@ -149,7 +149,7 @@ impl From<Error> for RepositoryError {
             Error::Unexpected(s) => RepositoryError::Storage(s),
             Error::Backend(e) => RepositoryError::Storage(e.to_string()),
             Error::Codec(e) => RepositoryError::Serde(e.to_string()),
-            Error::CursorOutOfBounds => RepositoryError::Storage("cursor out of bounds".into()),
+            Error::CursorOutOfBounds => RepositoryError::InvalidCursor,
         }
     }
 }
@@ -289,6 +289,23 @@ mod tests {
         iter.map(|entry| entry.map(|entry| entry.download))
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
+    }
+
+    #[test]
+    fn cursor_out_of_bounds_maps_to_invalid_cursor() {
+        let error = RepositoryError::from(Error::CursorOutOfBounds);
+
+        assert!(matches!(error, RepositoryError::InvalidCursor));
+    }
+
+    #[test]
+    fn unexpected_collette_error_remains_a_storage_error() {
+        let error = RepositoryError::from(Error::Unexpected("storage failure".to_owned()));
+
+        assert!(matches!(
+            error,
+            RepositoryError::Storage(message) if message == "storage failure"
+        ));
     }
 
     #[test]
@@ -600,7 +617,7 @@ mod tests {
             .scan_by_status(DownloadStatus::Queued, Some(cursor), SortOrder::Asc)
             .and_then(|iter| iter.collect::<Result<Vec<_>, _>>().map(|_| ()));
 
-        assert!(matches!(result, Err(RepositoryError::Storage(_))));
+        assert!(matches!(result, Err(RepositoryError::InvalidCursor)));
     }
 
     #[test]

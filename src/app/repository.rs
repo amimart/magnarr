@@ -36,6 +36,8 @@ pub enum RepositoryError {
     NotFound,
     #[error("already exists")]
     AlreadyExists,
+    #[error("invalid cursor")]
+    InvalidCursor,
     #[error("backend error: {0}")]
     Storage(String),
     #[error("serialization error: {0}")]
