@@ -275,6 +275,14 @@ mod tests {
         Download::new(magnet, "/downloads".to_owned())
     }
 
+    fn make_download_at(magnet_str: &str, status: DownloadStatus, timestamp: i64) -> Download {
+        let mut download = make_download(magnet_str);
+        download.status = status;
+        download.created_at = Utc.timestamp_opt(timestamp, 0).unwrap();
+        download.updated_at = download.created_at;
+        download
+    }
+
     fn collect_downloads(
         iter: impl Iterator<Item = Result<DownloadEntry, RepositoryError>>,
     ) -> Vec<Download> {
@@ -309,6 +317,29 @@ mod tests {
         let (store, _dir) = new_store();
         let result = store.get("0000000000000000000000000000000000000000");
         assert!(matches!(result, Err(RepositoryError::NotFound)));
+    }
+
+    #[test]
+    fn scans_return_empty_iterators_for_an_empty_store() {
+        let (store, _dir) = new_store();
+        let since = Utc.timestamp_opt(10, 0).unwrap();
+
+        assert!(collect_downloads(store.scan_all(None, SortOrder::Asc).unwrap()).is_empty());
+        assert!(collect_downloads(
+            store
+                .scan_by_status(DownloadStatus::Queued, None, SortOrder::Asc)
+                .unwrap(),
+        )
+        .is_empty());
+        assert!(
+            collect_downloads(store.scan_since(since, None, SortOrder::Asc).unwrap()).is_empty()
+        );
+        assert!(collect_downloads(
+            store
+                .scan_by_status_since(DownloadStatus::Queued, since, None, SortOrder::Asc,)
+                .unwrap(),
+        )
+        .is_empty());
     }
 
     #[test]
@@ -375,6 +406,36 @@ mod tests {
         assert_eq!(downloads.len(), 2);
         assert_eq!(downloads[0].info_hash, submitted.info_hash);
         assert_eq!(downloads[1].info_hash, submitted_older.info_hash);
+    }
+
+    #[test]
+    fn scan_by_status_supports_cursor_pagination() {
+        let (store, _dir) = new_store();
+        let first = make_download_at(MAGNET1, DownloadStatus::Submitted, 10);
+        let second = make_download_at(MAGNET2, DownloadStatus::Submitted, 20);
+        let excluded = make_download_at(MAGNET3, DownloadStatus::Queued, 30);
+
+        store.insert(&first).unwrap();
+        store.insert(&second).unwrap();
+        store.insert(&excluded).unwrap();
+
+        let first_page = store
+            .scan_by_status(DownloadStatus::Submitted, None, SortOrder::Asc)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let downloads = collect_downloads(
+            store
+                .scan_by_status(
+                    DownloadStatus::Submitted,
+                    Some(first_page[0].cursor.clone()),
+                    SortOrder::Asc,
+                )
+                .unwrap(),
+        );
+
+        assert_eq!(downloads.len(), 1);
+        assert_eq!(downloads[0].info_hash, second.info_hash);
     }
 
     #[test]
@@ -476,6 +537,73 @@ mod tests {
     }
 
     #[test]
+    fn since_scans_are_inclusive_and_support_descending_cursor_pagination() {
+        let (store, _dir) = new_store();
+        let excluded = make_download_at(MAGNET1, DownloadStatus::Submitted, 10);
+        let boundary = make_download_at(MAGNET2, DownloadStatus::Submitted, 20);
+        let newest = make_download_at(MAGNET3, DownloadStatus::Submitted, 30);
+
+        store.insert(&excluded).unwrap();
+        store.insert(&boundary).unwrap();
+        store.insert(&newest).unwrap();
+
+        let since = Utc.timestamp_opt(20, 0).unwrap();
+        let first_page = store
+            .scan_since(since, None, SortOrder::Desc)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let status_first_page = store
+            .scan_by_status_since(DownloadStatus::Submitted, since, None, SortOrder::Desc)
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let remaining = collect_downloads(
+            store
+                .scan_since(since, Some(first_page[0].cursor.clone()), SortOrder::Desc)
+                .unwrap(),
+        );
+        let status_remaining = collect_downloads(
+            store
+                .scan_by_status_since(
+                    DownloadStatus::Submitted,
+                    since,
+                    Some(status_first_page[0].cursor.clone()),
+                    SortOrder::Desc,
+                )
+                .unwrap(),
+        );
+
+        assert_eq!(first_page.len(), 2);
+        assert_eq!(first_page[0].download.info_hash, newest.info_hash);
+        assert_eq!(first_page[1].download.info_hash, boundary.info_hash);
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].info_hash, boundary.info_hash);
+        assert_eq!(status_remaining.len(), 1);
+        assert_eq!(status_remaining[0].info_hash, boundary.info_hash);
+    }
+
+    #[test]
+    fn cursor_from_another_scan_is_rejected() {
+        let (store, _dir) = new_store();
+        let download = make_download_at(MAGNET1, DownloadStatus::Queued, 10);
+        store.insert(&download).unwrap();
+
+        let cursor = store
+            .scan_all(None, SortOrder::Asc)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .cursor;
+        let result = store
+            .scan_by_status(DownloadStatus::Queued, Some(cursor), SortOrder::Asc)
+            .and_then(|iter| iter.collect::<Result<Vec<_>, _>>().map(|_| ()));
+
+        assert!(matches!(result, Err(RepositoryError::Storage(_))));
+    }
+
+    #[test]
     fn update_download_persists_changes() {
         let (store, _dir) = new_store();
         let dl = make_download(MAGNET1);
@@ -497,6 +625,29 @@ mod tests {
         );
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].info_hash, dl.info_hash);
+        assert!(collect_downloads(
+            store
+                .scan_by_status(DownloadStatus::Queued, None, SortOrder::Desc)
+                .unwrap(),
+        )
+        .is_empty());
+    }
+
+    #[test]
+    fn downloads_persist_when_the_store_is_reopened() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested/data/magnarr.redb");
+        let download = make_download(MAGNET1);
+
+        {
+            let store = DownloadStore::new(path.clone()).unwrap();
+            store.insert(&download).unwrap();
+        }
+
+        let reopened = DownloadStore::new(path).unwrap();
+        let fetched = reopened.get(&download.info_hash).unwrap();
+
+        assert_eq!(fetched, download);
     }
 
     #[test]
