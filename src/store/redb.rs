@@ -1,10 +1,12 @@
-use crate::app::download::{DownloadRepository, RepositoryError, SortOrder};
+use crate::app::download::{
+    DownloadCursor, DownloadEntry, DownloadRepository, RepositoryError, SortOrder,
+};
 use crate::types::{Download, DownloadStatus};
 use collette::backend::redb::{RedbMultiStore, RedbReadStore};
 use collette::index_registry::{Cons, Nil};
-use collette::iter::{Entry, IndexIterator};
+use collette::iter::IndexIterator;
 use collette::{
-    impl_enum_key, Collection, Cursor, Error, Index, Item, Multi, PrefixableScan, Scan,
+    impl_enum_key, Collection, Cursor, Direction, Error, Index, Item, Multi, PrefixableScan, Scan,
 };
 use std::path::PathBuf;
 
@@ -37,6 +39,15 @@ impl_enum_key!(DownloadStatus as u8 {
     DownloadStatus::Imported => 4,
     DownloadStatus::Failed => 5,
 });
+
+impl From<SortOrder> for Direction {
+    fn from(order: SortOrder) -> Self {
+        match order {
+            SortOrder::Asc => Direction::LeftToRight,
+            SortOrder::Desc => Direction::RightToLeft,
+        }
+    }
+}
 
 struct CreatedAt;
 
@@ -87,12 +98,25 @@ pub struct RedbDownloadIter {
 }
 
 impl Iterator for RedbDownloadIter {
-    type Item = Result<Entry<Download>, RepositoryError>;
+    type Item = Result<DownloadEntry, RepositoryError>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.inner
-            .next()
-            .map(|result| result.map_err(RepositoryError::from))
+        self.inner.next().map(|result| {
+            result.map_err(RepositoryError::from).and_then(|entry| {
+                let cursor = match entry.key {
+                    Cursor::Key(key) => DownloadCursor::new(key.to_vec()),
+                    Cursor::None => {
+                        return Err(RepositoryError::Storage(
+                            "missing cursor on download entry".into(),
+                        ));
+                    }
+                };
+                Ok(DownloadEntry {
+                    download: entry.record,
+                    cursor,
+                })
+            })
+        })
     }
 }
 
@@ -151,9 +175,12 @@ impl DownloadRepository for RedbStore {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Cursor,
+        after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, RepositoryError> {
+        let after = after
+            .map(|cursor| Cursor::Key(cursor.as_ref().to_vec().into()))
+            .unwrap_or(Cursor::None);
         let inner = match (status, from) {
             (Some(status), Some(from)) => self
                 .db
@@ -222,9 +249,9 @@ mod tests {
     }
 
     fn collect_downloads(
-        iter: impl Iterator<Item = Result<Entry<Download>, RepositoryError>>,
+        iter: impl Iterator<Item = Result<DownloadEntry, RepositoryError>>,
     ) -> Vec<Download> {
-        iter.map(|entry| entry.map(|entry| entry.record))
+        iter.map(|entry| entry.map(|entry| entry.download))
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
     }
@@ -276,11 +303,7 @@ mod tests {
         store.insert(&newest).unwrap();
         store.insert(&middle).unwrap();
 
-        let downloads = collect_downloads(
-            store
-                .list(None, None, Cursor::None, SortOrder::Desc)
-                .unwrap(),
-        );
+        let downloads = collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap());
 
         assert_eq!(
             downloads
@@ -318,12 +341,7 @@ mod tests {
 
         let downloads = collect_downloads(
             store
-                .list(
-                    Some(DownloadStatus::Submitted),
-                    None,
-                    Cursor::None,
-                    SortOrder::Desc,
-                )
+                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Desc)
                 .unwrap(),
         );
 
@@ -346,11 +364,7 @@ mod tests {
         store.insert(&second).unwrap();
         store.insert(&first).unwrap();
 
-        let downloads = collect_downloads(
-            store
-                .list(None, None, Cursor::None, SortOrder::Asc)
-                .unwrap(),
-        );
+        let downloads = collect_downloads(store.list(None, None, None, SortOrder::Asc).unwrap());
 
         assert_eq!(downloads[0].info_hash, first.info_hash);
         assert_eq!(downloads[1].info_hash, second.info_hash);
@@ -378,15 +392,15 @@ mod tests {
         store.insert(&older).unwrap();
 
         let first_page = store
-            .list(None, None, Cursor::None, SortOrder::Desc)
+            .list(None, None, None, SortOrder::Desc)
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        let second_cursor = first_page[1].key.clone();
+        let second_cursor = first_page[1].cursor.clone();
 
         let downloads = collect_downloads(
             store
-                .list(None, None, second_cursor, SortOrder::Desc)
+                .list(None, None, Some(second_cursor), SortOrder::Desc)
                 .unwrap(),
         );
 
@@ -414,7 +428,7 @@ mod tests {
                 .list(
                     Some(DownloadStatus::Downloading),
                     None,
-                    Cursor::None,
+                    None,
                     SortOrder::Desc,
                 )
                 .unwrap(),
@@ -434,20 +448,12 @@ mod tests {
             store.get(&dl.info_hash),
             Err(RepositoryError::NotFound)
         ));
+        assert!(
+            collect_downloads(store.list(None, None, None, SortOrder::Desc).unwrap(),).is_empty()
+        );
         assert!(collect_downloads(
             store
-                .list(None, None, Cursor::None, SortOrder::Desc)
-                .unwrap(),
-        )
-        .is_empty());
-        assert!(collect_downloads(
-            store
-                .list(
-                    Some(DownloadStatus::Queued),
-                    None,
-                    Cursor::None,
-                    SortOrder::Desc,
-                )
+                .list(Some(DownloadStatus::Queued), None, None, SortOrder::Desc,)
                 .unwrap(),
         )
         .is_empty());

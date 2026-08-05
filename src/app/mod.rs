@@ -3,7 +3,6 @@ pub mod error;
 pub mod service;
 pub mod torrent;
 
-use collette::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -88,12 +87,9 @@ where
         after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, AppError> {
-        Ok(DownloadIter::new(self.repository.list(
-            status,
-            from,
-            after.map(Cursor::from).unwrap_or(Cursor::None),
-            order,
-        )?))
+        Ok(DownloadIter::new(
+            self.repository.list(status, from, after, order)?,
+        ))
     }
 }
 
@@ -189,17 +185,14 @@ where
         let downloading_iter = self.repository.list(
             Some(DownloadStatus::Downloading),
             None,
-            Cursor::None,
-            SortOrder::Asc,
-        )?;
-        let submitted_iter = self.repository.list(
-            Some(DownloadStatus::Submitted),
             None,
-            Cursor::None,
             SortOrder::Asc,
         )?;
+        let submitted_iter =
+            self.repository
+                .list(Some(DownloadStatus::Submitted), None, None, SortOrder::Asc)?;
         Ok(downloading_iter.chain(submitted_iter).map(|r| match r {
-            Ok(e) => Ok(e.record),
+            Ok(e) => Ok(e.download),
             Err(e) => Err(e),
         }))
     }
@@ -207,14 +200,9 @@ where
     async fn import_downloads(&self, token: &CancellationToken) {
         let importing = match self
             .repository
-            .list(
-                Some(DownloadStatus::Importing),
-                None,
-                Cursor::None,
-                SortOrder::Asc,
-            )
+            .list(Some(DownloadStatus::Importing), None, None, SortOrder::Asc)
             .and_then(|iter| {
-                iter.map(|r| r.map(|e| e.record))
+                iter.map(|r| r.map(|e| e.download))
                     .collect::<Result<Vec<_>, RepositoryError>>()
             }) {
             Ok(downloads) => downloads,
@@ -287,12 +275,11 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{DownloadCursor, RepositoryError, SortOrder};
+    use crate::app::download::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};
     use async_trait::async_trait;
-    use collette::iter::Entry;
     use std::sync::Mutex;
 
     const MAGNET: &str = "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=test";
@@ -376,7 +363,7 @@ mod tests {
     struct RecordedListCall {
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Cursor,
+        after: Option<DownloadCursor>,
         order: SortOrder,
     }
 
@@ -390,7 +377,7 @@ mod tests {
     }
 
     impl DownloadRepository for PagingRepository {
-        type Iter<'a> = std::vec::IntoIter<Result<Entry<Download>, RepositoryError>>;
+        type Iter<'a> = std::vec::IntoIter<Result<DownloadEntry, RepositoryError>>;
 
         fn insert(&self, _download: &Download) -> Result<(), RepositoryError> {
             unimplemented!()
@@ -404,7 +391,7 @@ mod tests {
             &self,
             status: Option<DownloadStatus>,
             from: Option<chrono::DateTime<chrono::Utc>>,
-            after: Cursor,
+            after: Option<DownloadCursor>,
             order: SortOrder,
         ) -> Result<Self::Iter<'_>, RepositoryError> {
             *self.last_call.lock().unwrap() = Some(RecordedListCall {
@@ -417,10 +404,10 @@ mod tests {
                 .downloads
                 .clone()
                 .into_iter()
-                .map(|record| {
-                    Ok(Entry {
-                        key: Cursor::from_key(record.info_hash.as_str()),
-                        record,
+                .map(|download| {
+                    Ok(DownloadEntry {
+                        cursor: DownloadCursor::new(download.info_hash.as_bytes().to_vec()),
+                        download,
                     })
                 })
                 .collect::<Vec<_>>()
@@ -501,7 +488,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(downloads.len(), 1);
-        assert_eq!(downloads[0].record.status, DownloadStatus::Queued);
+        assert_eq!(downloads[0].download.status, DownloadStatus::Queued);
     }
 
     #[test]
@@ -530,7 +517,7 @@ mod tests {
             Some(RecordedListCall {
                 status: Some(DownloadStatus::Queued),
                 from: None,
-                after: Cursor::from(after),
+                after: Some(after),
                 order: SortOrder::Asc,
             })
         );

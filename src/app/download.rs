@@ -1,5 +1,3 @@
-use collette::iter::Entry;
-use collette::{Cursor, Direction};
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
@@ -9,15 +7,6 @@ pub enum SortOrder {
     Asc,
     #[default]
     Desc,
-}
-
-impl From<SortOrder> for Direction {
-    fn from(val: SortOrder) -> Self {
-        match val {
-            SortOrder::Asc => Direction::LeftToRight,
-            SortOrder::Desc => Direction::RightToLeft,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,19 +24,10 @@ impl AsRef<[u8]> for DownloadCursor {
     }
 }
 
-impl From<Cursor> for DownloadCursor {
-    fn from(cursor: Cursor) -> Self {
-        match cursor {
-            Cursor::None => DownloadCursor(Vec::new()),
-            Cursor::Key(k) => DownloadCursor(k.to_vec()),
-        }
-    }
-}
-
-impl From<DownloadCursor> for Cursor {
-    fn from(value: DownloadCursor) -> Self {
-        Cursor::Key(value.0.into())
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadEntry {
+    pub download: Download,
+    pub cursor: DownloadCursor,
 }
 
 #[derive(Debug, Error)]
@@ -63,7 +43,7 @@ pub enum RepositoryError {
 }
 
 pub trait DownloadRepository: Send + Sync {
-    type Iter<'a>: Iterator<Item = Result<Entry<Download>, RepositoryError>> + 'a
+    type Iter<'a>: Iterator<Item = Result<DownloadEntry, RepositoryError>> + 'a
     where
         Self: 'a;
 
@@ -73,7 +53,7 @@ pub trait DownloadRepository: Send + Sync {
         &self,
         status: Option<DownloadStatus>,
         from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Cursor,
+        after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, RepositoryError>;
     fn update(&self, download: &Download) -> Result<(), RepositoryError>;
