@@ -1,1 +1,3 @@
-pub mod redb;
+pub mod download;
+
+pub use download::DownloadStore;

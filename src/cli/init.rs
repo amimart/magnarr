@@ -1,5 +1,5 @@
 use crate::cli::config::{get_config_path, Config};
-use crate::store::redb::RedbStore;
+use crate::store::DownloadStore;
 use std::path::Path;
 
 pub fn run(home: &Path) {
@@ -29,7 +29,7 @@ pub fn run(home: &Path) {
     tracing::info!(path = %config_path.display(), "Created config file with default settings");
 
     let store_path = cfg.store.resolve_path(home);
-    RedbStore::new(store_path.clone()).unwrap_or_else(|e| {
+    DownloadStore::new(store_path.clone()).unwrap_or_else(|e| {
         tracing::error!("Failed to initialize store: {e}");
         std::process::exit(1);
     });

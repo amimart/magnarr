@@ -1,4 +1,4 @@
-use crate::app::download::DownloadCursor;
+use crate::app::repository::DownloadCursor;
 use crate::app::service::DownloadService;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::{Download, DownloadStatus, SortOrder};
@@ -59,7 +59,7 @@ where
 
         let mut edges = iter
             .take(limit + 1)
-            .map(|r| r.map(|e| Edge::new(encode_downloads_cursor(e.key.into()), e.record.into())))
+            .map(|r| r.map(|e| Edge::new(encode_downloads_cursor(e.cursor), e.download.into())))
             .collect::<Result<Vec<_>, _>>()?;
 
         let has_next_page = edges.len() > limit;
@@ -142,16 +142,14 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::app::download::SortOrder as AppSortOrder;
     use crate::app::error::AppError;
+    use crate::app::repository::{DownloadEntry, SortOrder as AppSortOrder};
     use crate::app::service::DownloadService;
     use crate::types::DownloadStatus as DomainDownloadStatus;
     use crate::types::{Download as DomainDownload, Magnet};
     use async_graphql::Request;
     use async_trait::async_trait;
     use chrono::{TimeZone, Utc};
-    use collette::iter::Entry;
-    use collette::Cursor;
 
     const MAGNETS: [&str; 3] = [
         "magnet:?xt=urn:btih:ABCDEF1234567890ABCDEF1234567890ABCDEF12&dn=first",
@@ -174,7 +172,7 @@ mod tests {
 
     #[async_trait]
     impl DownloadService for MockDownloadService {
-        type Iter<'a> = std::vec::IntoIter<Result<Entry<DomainDownload>, AppError>>;
+        type Iter<'a> = std::vec::IntoIter<Result<DownloadEntry, AppError>>;
 
         async fn download(
             &self,
@@ -226,24 +224,31 @@ mod tests {
 
                     true
                 })
-                .map(|record| {
-                    let key = Cursor::from_key((
-                        record.created_at.timestamp_micros(),
-                        record.info_hash.as_str(),
-                    ));
-                    Entry { record, key }
+                .map(|download| {
+                    let cursor = download_cursor(&download);
+                    DownloadEntry { download, cursor }
                 })
                 .collect::<Vec<_>>();
 
             if let Some(after) = after {
-                let cursor = Cursor::from(after);
-                if let Some(position) = entries.iter().position(|entry| entry.key == cursor) {
+                if let Some(position) = entries.iter().position(|entry| entry.cursor == after) {
                     entries.drain(..=position);
                 }
             }
 
             Ok(entries.into_iter().map(Ok).collect::<Vec<_>>().into_iter())
         }
+    }
+
+    fn download_cursor(download: &DomainDownload) -> DownloadCursor {
+        DownloadCursor::new(
+            format!(
+                "{}:{}",
+                download.created_at.timestamp_micros(),
+                download.info_hash
+            )
+            .into_bytes(),
+        )
     }
 
     fn new_mock_service() -> Arc<MockDownloadService> {
@@ -325,10 +330,7 @@ mod tests {
             Some(DownloadsCall {
                 status: None,
                 from: None,
-                after: Some(DownloadCursor::from(Cursor::from_key((
-                    Utc.timestamp_opt(20, 0).unwrap().timestamp_micros(),
-                    "FEDCBA0987654321FEDCBA0987654321FEDCBA09",
-                )))),
+                after: Some(download_cursor(&service.downloads[1])),
                 order: AppSortOrder::Desc,
             })
         );

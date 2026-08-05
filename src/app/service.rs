@@ -1,12 +1,11 @@
-use crate::app::download::{DownloadCursor, RepositoryError, SortOrder};
 use crate::app::error::AppError;
+use crate::app::repository::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
 use crate::types::{Download, DownloadStatus, Magnet};
 use async_trait::async_trait;
-use collette::iter::Entry;
 
 #[async_trait]
 pub trait DownloadService: Send + Sync {
-    type Iter<'a>: Iterator<Item = Result<Entry<Download>, AppError>> + 'a
+    type Iter<'a>: Iterator<Item = Result<DownloadEntry, AppError>> + 'a
     where
         Self: 'a;
 
@@ -36,9 +35,9 @@ impl<I> DownloadIter<I> {
 
 impl<I> Iterator for DownloadIter<I>
 where
-    I: Iterator<Item = Result<Entry<Download>, RepositoryError>>,
+    I: Iterator<Item = Result<DownloadEntry, RepositoryError>>,
 {
-    type Item = Result<Entry<Download>, AppError>;
+    type Item = Result<DownloadEntry, AppError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.inner

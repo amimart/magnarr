@@ -1,5 +1,3 @@
-use collette::iter::Entry;
-use collette::{Cursor, Direction};
 use thiserror::Error;
 
 use crate::types::{Download, DownloadStatus};
@@ -9,15 +7,6 @@ pub enum SortOrder {
     Asc,
     #[default]
     Desc,
-}
-
-impl From<SortOrder> for Direction {
-    fn from(val: SortOrder) -> Self {
-        match val {
-            SortOrder::Asc => Direction::LeftToRight,
-            SortOrder::Desc => Direction::RightToLeft,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,19 +24,10 @@ impl AsRef<[u8]> for DownloadCursor {
     }
 }
 
-impl From<Cursor> for DownloadCursor {
-    fn from(cursor: Cursor) -> Self {
-        match cursor {
-            Cursor::None => DownloadCursor(Vec::new()),
-            Cursor::Key(k) => DownloadCursor(k.to_vec()),
-        }
-    }
-}
-
-impl From<DownloadCursor> for Cursor {
-    fn from(value: DownloadCursor) -> Self {
-        Cursor::Key(value.0.into())
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadEntry {
+    pub download: Download,
+    pub cursor: DownloadCursor,
 }
 
 #[derive(Debug, Error)]
@@ -56,6 +36,8 @@ pub enum RepositoryError {
     NotFound,
     #[error("already exists")]
     AlreadyExists,
+    #[error("invalid cursor")]
+    InvalidCursor,
     #[error("backend error: {0}")]
     Storage(String),
     #[error("serialization error: {0}")]
@@ -63,17 +45,34 @@ pub enum RepositoryError {
 }
 
 pub trait DownloadRepository: Send + Sync {
-    type Iter<'a>: Iterator<Item = Result<Entry<Download>, RepositoryError>> + 'a
+    type Iter<'a>: Iterator<Item = Result<DownloadEntry, RepositoryError>> + 'a
     where
         Self: 'a;
 
     fn insert(&self, download: &Download) -> Result<(), RepositoryError>;
     fn get(&self, info_hash: &str) -> Result<Download, RepositoryError>;
-    fn list(
+    fn scan_all(
         &self,
-        status: Option<DownloadStatus>,
-        from: Option<chrono::DateTime<chrono::Utc>>,
-        after: Cursor,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
+    fn scan_by_status(
+        &self,
+        status: DownloadStatus,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
+    fn scan_since(
+        &self,
+        since: chrono::DateTime<chrono::Utc>,
+        after: Option<DownloadCursor>,
+        order: SortOrder,
+    ) -> Result<Self::Iter<'_>, RepositoryError>;
+    fn scan_by_status_since(
+        &self,
+        status: DownloadStatus,
+        since: chrono::DateTime<chrono::Utc>,
+        after: Option<DownloadCursor>,
         order: SortOrder,
     ) -> Result<Self::Iter<'_>, RepositoryError>;
     fn update(&self, download: &Download) -> Result<(), RepositoryError>;
