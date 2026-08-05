@@ -1,7 +1,7 @@
 use async_graphql::{Enum, Object};
 use chrono::{DateTime, Utc};
 
-use crate::app::download::SortOrder as AppSortOrder;
+use crate::app::repository::SortOrder as AppSortOrder;
 use crate::graphql::scalars::MagnetUri;
 use crate::types::{Download as DomainDownload, DownloadStatus as DomainDownloadStatus};
 

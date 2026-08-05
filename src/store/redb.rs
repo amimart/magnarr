@@ -1,4 +1,4 @@
-use crate::app::download::{
+use crate::app::repository::{
     DownloadCursor, DownloadEntry, DownloadRepository, RepositoryError, SortOrder,
 };
 use crate::types::{Download, DownloadStatus};

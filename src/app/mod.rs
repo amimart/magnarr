@@ -1,4 +1,4 @@
-pub mod download;
+pub mod repository;
 pub mod error;
 pub mod service;
 pub mod torrent;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-use crate::app::download::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
+use crate::app::repository::{DownloadCursor, DownloadRepository, RepositoryError, SortOrder};
 use crate::app::error::AppError;
 use crate::app::service::{DownloadIter, DownloadService};
 use crate::app::torrent::{TorrentClient, TorrentClientError};
@@ -278,7 +278,7 @@ fn copy_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::download::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
+    use crate::app::repository::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
     use crate::app::torrent::TorrentClientError;
     use crate::store::redb::RedbStore;
     use crate::types::{TorrentState, TorrentStatus};

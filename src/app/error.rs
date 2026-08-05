@@ -1,6 +1,6 @@
 use thiserror::Error;
 
-use crate::app::download::RepositoryError;
+use crate::app::repository::RepositoryError;
 use crate::app::torrent::TorrentClientError;
 
 #[derive(Debug, Error)]

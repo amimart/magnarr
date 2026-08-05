@@ -1,4 +1,4 @@
-use crate::app::download::DownloadCursor;
+use crate::app::repository::DownloadCursor;
 use crate::app::service::DownloadService;
 use crate::graphql::scalars::MagnetUri;
 use crate::graphql::types::{Download, DownloadStatus, SortOrder};
@@ -142,7 +142,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::app::download::{DownloadEntry, SortOrder as AppSortOrder};
+    use crate::app::repository::{DownloadEntry, SortOrder as AppSortOrder};
     use crate::app::error::AppError;
     use crate::app::service::DownloadService;
     use crate::types::DownloadStatus as DomainDownloadStatus;

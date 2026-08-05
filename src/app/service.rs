@@ -1,4 +1,4 @@
-use crate::app::download::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
+use crate::app::repository::{DownloadCursor, DownloadEntry, RepositoryError, SortOrder};
 use crate::app::error::AppError;
 use crate::types::{Download, DownloadStatus, Magnet};
 use async_trait::async_trait;
