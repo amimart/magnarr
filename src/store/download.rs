@@ -193,8 +193,7 @@ impl DownloadRepository for DownloadStore {
     ) -> Result<Self::Iter<'_>, RepositoryError> {
         let inner = self
             .db
-            .index_scan(StatusAndCreatedAt)
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?
+            .index_scan(StatusAndCreatedAt)?
             .prefix(status)
             .direction(order.into())
             .after(to_collette_cursor(after))
@@ -227,8 +226,7 @@ impl DownloadRepository for DownloadStore {
     ) -> Result<Self::Iter<'_>, RepositoryError> {
         let inner = self
             .db
-            .index_scan(StatusAndCreatedAt)
-            .map_err(|e| RepositoryError::Storage(e.to_string()))?
+            .index_scan(StatusAndCreatedAt)?
             .prefix(status)
             .range(since.timestamp_micros()..)
             .direction(order.into())
